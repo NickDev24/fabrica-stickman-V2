@@ -44,5 +44,4 @@ def test_queries_dedup_y_recorte(monkeypatch):
     monkeypatch.setattr(d.llm, "chat",
                         lambda *a, **k: '{"queries":["uno", "dos", "", "tres", "cuatro", "cinco", "seis"]}')
     qs = d._queries("tema x", "ep-test")
-    assert qs[0] == "uno" and qs[-1] == "seis"
-    assert len(qs) <= 5
+    assert qs == ["uno", "dos", "tres", "cuatro", "cinco"]
