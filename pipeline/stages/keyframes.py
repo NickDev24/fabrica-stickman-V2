@@ -535,11 +535,32 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     # los 18 otra vez cuesta ~2 min por nada.
     huellas = partes / "huellas.json"
     previos = json.loads(huellas.read_text()) if huellas.exists() else {}
-    hechos = 0
+    pendientes = []
     for b, img in zip(bs, kfs):
         marca = f"{img}:{b['dur_s']}:{b['mov']}:{b['plano']}:{','.join(b.get('fx', []))}"
         out = partes / "k-{:03d}.mp4".format(b["i"])
         if previos.get(str(out)) == marca and out.exists():
+            continue
+        pendientes.append((b, img, marca))
+    hechos = 0
+    if pendientes and os.environ.get("RENDER_REMOTO", "1") != "0":
+        # Laboratorio SSH habilitado (decisión del dueño 2026-11-04): los encodes
+        # por beat se reparten en los nodos vivos; lo que un nodo dropea se rinde
+        # local, y con las nodas caídas la ruta es idéntica a la de siempre.
+        from .. import remoto
+        try:
+            r = remoto.repartir_planos(ep.slug, [p[0] for p in pendientes],
+                                       [Path(p[1]) for p in pendientes], partes, previos)
+            hechos += len(r["hechos"])
+            caidos = set(r["fallidos"])
+        except Exception as exc:  # noqa: BLE001 — el lab ES una mejora, no un requisito
+            print(f"  remoto no disponible ({str(exc)[:80]}): todo local")
+            caidos = {b["i"] for b, _f, _m in pendientes}
+    else:
+        caidos = {b["i"] for b, _f, _m in pendientes}
+    for b, img, marca in pendientes:
+        out = partes / "k-{:03d}.mp4".format(b["i"])
+        if b["i"] not in caidos and out.exists() and out.stat().st_size > 0:
             continue
         _plano(b, img, out)
         previos[str(out)] = marca

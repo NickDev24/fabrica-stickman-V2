@@ -192,6 +192,27 @@ def estilo() -> dict:
     return json.loads(ESTILO.read_text(encoding="utf-8"))
 
 
+def _variante_identidad(e: dict, accion: str, plano: str) -> str:
+    """Contrato MIXTO v9: en primer plano/detalle el personaje muestra cara.
+
+    El cuerpo en planos anchos sigue siendo la silueta sin rostro de la v8; la
+    cara expresiva (ojos + boca blancos) sólo entra cuando la cámara está cerca
+    de la cabeza — es lo que retiene el scroll en los canales virales de stickman.
+    """
+    if plano in ("primer_plano", "detalle") and e.get("identidad_cara"):
+        return e["identidad_cara"]
+    return e["identidad"]
+
+
+def _expresion(e: dict, accion: str) -> str:
+    """Emoción codificada para la variante cara (determinística, auditable)."""
+    cara = e.get("expresiones") or {}
+    for clave in cara:
+        if clave in accion:
+            return cara[clave]
+    return ""
+
+
 def armar_prompt(escena: str, accion: str, plano: str = "medio") -> str:
     """IDENTIDAD + ESTILO + escenario + acción + plano + negativos, siempre en ese orden.
 
@@ -201,9 +222,12 @@ def armar_prompt(escena: str, accion: str, plano: str = "medio") -> str:
     cruda ("senal_final") condiciona casi nada y el modelo devuelve siempre lo mismo.
     """
     e = estilo()
+    ident = _variante_identidad(e, e["acciones"].get(accion, accion), plano)
+    cara = f"face: {_expresion(e, accion)}" if plano in ("primer_plano", "detalle") else ""
     partes = [
-        e["identidad"],
+        ident,
         e["estilo"],
+        cara,
         e["escenarios"].get(escena, escena),
         e["acciones"].get(accion, accion),
         e["planos"].get(plano, plano),
@@ -232,7 +256,16 @@ def armar_prompt_dirigido(beat: dict) -> str:
            "pull": "slow pull-back", "pan": "lateral pan",
            "shake": "handheld"}.get(beat.get("mov", ""), "static")
     # Orden del contrato visual: identidad, estilo, escenario, acción, dirección, negativos.
-    partes = [e["identidad"][:95], e["estilo"][:62], escenario[:34],
+    # Contrato MIXTO v9: primer_plano/detalle usan la variante cara (ojos+boca) con la
+    # emoción del beat; el resto usa la silueta sin rostro de la v8.
+    accion_txt = e["acciones"].get(beat.get("accion", ""), beat.get("accion", ""))
+    ident = _variante_identidad(e, accion_txt, beat.get("plano", "medio"))
+    cara = ""
+    if beat.get("plano") in ("primer_plano", "detalle"):
+        expr = _expresion(e, accion_txt)
+        if expr:
+            cara = f"face: {expr}"[:48]
+    partes = [ident[:95], e["estilo"][:62], cara, escenario[:34],
               f"evidence-centered, {accion}"[:40], f"{plano_txt}; {cam}"[:46],
               f"scene: {idea}; key object: {prop}; action: {acting}; reveal: {reveal}; motion: {movimiento}",
               "black ink, warm white, red accent, clear readable shapes, no generated lettering",
