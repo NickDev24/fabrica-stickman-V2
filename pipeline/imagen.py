@@ -76,7 +76,8 @@ def _cuota_diaria() -> tuple[Path, dict]:
     datos["limite_local"] = limite
     if int(datos.get("solicitudes_exitosas", 0)) >= limite:
         raise RuntimeError(f"tope local gratuito de Workers AI alcanzado ({limite} imágenes hoy); "
-                           "se cambia al render avatar local")
+                           "sin cuota no hay motor de imágenes y el keyframe queda bloqueado "
+                           "(no hay motor alternativo activo)")
     return ruta, datos
 
 

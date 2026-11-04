@@ -10,12 +10,12 @@ Facebook requiere `AUTO_PUBLISH=true` explícito; por defecto se entrega para re
 
 Comandos por etapa (para re-corridas o revisión puntual):
   nuevo <slug> --titulo "..." | research | factcheck | guion [--angulo] | narrar
-  avatar <slug> [--glb Ruta] [--segundos N] [--reanudar] | montar | derivados | publicar |
+  keyframes <slug> [--contacto|--forzar] | derivados | publicar |
   enviar | registrar <slug> | gates | estado
 
-`avatar` es la etapa de actuación 3D: timeline del director + visemas de Rhubarb -> frames
-headless (960x540, 24 fps) -> upscale 720p + subtítulos ASS + mezcla normalizada a -16 LUFS.
-Renders de 30 s ≈ 7 min en esta caja; `--reanudar` conserva los frames ya escritos.
+Rutas DESCARTADAS por decisión del dueño (ya no son comandos válidos): `avatar`
+(3D GLB con ojos y lipsync), `visuales` (fotos reales de Wikimedia) y `montar`
+(Ken Burns sobre fotos). La fábrica sólo produce videos stickman keyframe.
 Orquestación por skills (decide qué skill usar y reanuda por artefactos):
   python3 -c "from factory import orchestrador as o; o.correr(o.Episode('<slug>'))"
 """
@@ -32,8 +32,8 @@ from pathlib import Path
 from . import config
 from .episode import Episode, STAGES
 from .gates import GateFailure, run_all_gates
-from .stages import (avatar, descubrir, derivados, guion, keyframes, montaje, narracion,
-                     publicacion, research, visuales)
+from .stages import (captacion, descubrir, derivados, guion, keyframes, narracion,
+                     publicacion, research)
 
 
 def _slugify(texto: str) -> str:
@@ -72,6 +72,12 @@ def run_auto(args) -> None:
         info_render = keyframes.render(ep, modelo=args.modelo)
         keyframes_final = ep.dir / "renders" / info_render["archivo"]
         derivados._derivar_keyframe(ep, keyframes_final)
+        # Piezas de captación del día (trailers A/B + historieta) sobre el capítulo ya renderizado.
+        import pipeline.stages.captacion as captacion
+        try:
+            captacion.derivar_captacion(ep)
+        except SystemExit as cta_err:
+            print(f"  captacion no generó piezas: {cta_err}")
         publicacion.checklist(ep)
         publicacion.publicar_automatico(ep, no_publish=True)
         publicacion.enviar_telegram(ep)
@@ -99,24 +105,21 @@ def main(argv=None) -> int:
 
     sp = sub.add_parser("auto"); sp.add_argument("--historia", required=True)
     sp.add_argument("--slug"); sp.add_argument("--angulo"); sp.add_argument("--no-publicar", action="store_true")
-    sp.add_argument("--motor", choices=["keyframe", "montaje"], default="keyframe",
-                    help="keyframe = imágenes generadas + cámara 2.5D (motor viral del formato)")
-    sp.add_argument("--modelo", default="flux", help="modelo de imagen de Workers AI")
+    sp.add_argument("--motor", choices=["keyframe"], default="keyframe",
+                    help="único motor: keyframe = imágenes generadas + cámara 2.5D (stickman)")
+    sp.add_argument("--modelo", default="flux", choices=["flux"],
+                    help="modelo de imagen de Workers AI (único admitido: flux)")
     sp.add_argument("--categoria", choices=sorted(__import__("pipeline.nichos", fromlist=["CATEGORIAS"]).CATEGORIAS),
                     help="categoría editorial; auto conserva research/urls.txt curado al crear el episodio")
 
     sp = sub.add_parser("nuevo"); sp.add_argument("slug"); sp.add_argument("--titulo", required=True)
-    for name in ("research", "factcheck", "visuales", "narrar", "avatar", "montar", "keyframes", "preview",
-                 "derivados", "publicar",
+    for name in ("research", "factcheck", "narrar", "keyframes", "preview",
+                 "derivados", "captacion", "publicar",
                  "enviar", "registrar", "gates", "estado"):
         sp = sub.add_parser(name); sp.add_argument("slug")
-        if name == "avatar":
-            sp.add_argument("--glb", help="GLB del personaje (default: state/personajes o assets/**/*.glb)")
-            sp.add_argument("--segundos", type=float, help="render only this many seconds (prueba corta)")
-            sp.add_argument("--reanudar", action="store_true",
-                            help="conserva los frames ya renderizados y sigue desde ahí")
         if name == "keyframes":
-            sp.add_argument("--modelo", default="flux", help="modelo de imagen de Workers AI")
+            sp.add_argument("--modelo", default="flux", choices=["flux"],
+                            help="modelo de imagen de Workers AI (único admitido: flux)")
             sp.add_argument("--contacto", action="store_true",
                             help="sólo beats + keyframes + hoja de contactos, sin renderizar")
             sp.add_argument("--forzar", action="store_true",
@@ -138,22 +141,19 @@ def main(argv=None) -> int:
         return 0
 
     ep = Episode(args.slug)
+    # Rutas de video NO-stickman (avatar 3D, fotos reales, Ken Burns) descartadas por el
+    # dueño: no existen en este dispatch. La única ruta de render es `keyframes`.
     dispatch = {
         "research": lambda: research.research(ep),
         "factcheck": lambda: research.factcheck(ep),
-        "visuales": lambda: visuales.generar(ep),
         "guion": lambda: guion.guion(ep, args.angulo),
         "narrar": lambda: narracion.narrar(ep),
-        "avatar": lambda: avatar.render(ep, glb=Path(args.glb) if getattr(args, "glb", None) else None,
-                                        reanudar=bool(getattr(args, "reanudar", False)),
-                                        forzar_frames=(int(args.segundos * avatar.FPS) + 1
-                                                       if getattr(args, "segundos", None) else None)),
-        "montar": lambda: montaje.montar(ep),
         "keyframes": lambda: keyframes.render(ep, modelo=args.modelo,
                                                forzar=bool(args.forzar),
                                                solo_contacto=bool(args.contacto)),
         "preview": lambda: keyframes.preview(ep, modelo=args.modelo, segundos=args.segundos),
         "derivados": lambda: derivados.derivar(ep),
+        "captacion": lambda: captacion.derivar_captacion(ep),
         "publicar": lambda: publicacion.checklist(ep),
         "enviar": lambda: publicacion.enviar_telegram(ep),
         "registrar": lambda: publicacion.registrar(ep, estado=args.__dict__.get("estado", "producido")),

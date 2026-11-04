@@ -524,24 +524,10 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
                                         "listo_para_render": False})
         return {"contacto": str(sheet), "beats": len(bs), "renderizado": False}
 
-    # Dos maestros posibles sobre el mismo storyboard:
-    #   KF_MASTER=keyframe (default) -> 2.5D: still + cámara FFmpeg + subtítulos + mezcla.
-    #     Es la ruta del brief: 30-40 imágenes/min, sin render 3D por fotograma.
-    #   KF_MASTER=avatar -> presentador GLB con ojos, expresiones y lip-sync Rhubarb.
-    #     Más expresivo, mucho más lento en CPU (minutos por minuto de video).
-    maestro = os.environ.get("KF_MASTER", "keyframe").strip().lower()
-    if maestro == "avatar":
-        from . import avatar
-        info_avatar = avatar.render(ep)
-        info_avatar.update({"motor_final": "avatar_actuado_con_lipsync",
-                            "contacto": str(sheet.relative_to(ep.dir)),
-                            "modelo_imagen": modelo,
-                            "llamadas_api": stats["generados_nuevos"],
-                            "segundos_api": stats["segundos_api"]})
-        ep.write_json("render_keyframes.json", info_avatar)
-        ep.set_stage("keyframes", "done")
-        return info_avatar
-
+    # Único maestro de producción: keyframe 2.5D (silueta stickman + cámara FFmpeg +
+    # subtítulos + mezcla). La ruta del brief: 30-40 imágenes/min, sin render 3D por
+    # fotograma. El maestro avatar (GLB con ojos y lipsync) fue DESCARTADO de esta ruta
+    # por decisión del dueño: la fábrica sólo genera videos stickman.
     partes = ep.dir / "renders" / "kf-parts"
     partes.mkdir(parents=True, exist_ok=True)
     t_planos = time.time()
