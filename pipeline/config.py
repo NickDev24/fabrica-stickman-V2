@@ -104,6 +104,9 @@ PROVIDERS = {
         "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "key_env": "GEMINI_API_KEY",
         "model": os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
+        # gemini-3.8-flash razona por defecto y el razonamiento se come el max_tokens del
+        # JSON (demostrado: 19/19 ideas descartadas por truncado). 'low' responde completo.
+        "params": {"reasoning_effort": os.environ.get("GEMINI_REASONING_EFFORT", "low")},
         "precio_in_usd_mtok": float(os.environ.get("GEMINI_INPUT_USD_MTOK", "0.75")),
         "precio_out_usd_mtok": float(os.environ.get("GEMINI_OUTPUT_USD_MTOK", "3.75")),
         "presupuesto_usd_mes": float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.50")),

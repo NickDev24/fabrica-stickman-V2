@@ -62,7 +62,14 @@ def _historia_del_dia() -> tuple[str, str]:
         print("  fábrica: no hay ranking del día — genero ideas y verifico antes de decidir")
         cards = ideas.generar(cantidad=6)
     if not cards:
-        raise SystemExit("auto: la fábrica no pudo generar ninguna idea verificada hoy")
+        raise SystemExit("auto: la fábrica no pudo generar ninguna idea hoy")
+    # la fábrica NUNCA produce contenido sin fuentes verificadas
+    verificadas = [c for c in cards
+                   if str(c.get("estado") or "").strip().lower() == "verificada"]
+    if not verificadas:
+        raise SystemExit(
+            "auto: 0 ideas verificadas hoy (mínimo 2 fuentes por afirmación) — "
+            "no se produce contenido sin fuentes; revisar tendencias/descubrir")
 
     def _num(c, clave, default=0.0):
         try:
@@ -73,7 +80,7 @@ def _historia_del_dia() -> tuple[str, str]:
     def _clave(c):
         return (_num(c, "score"), -int(_num(c, "rank", 99)))
 
-    elegida = sorted(cards, key=_clave, reverse=True)[0]
+    elegida = sorted(verificadas, key=_clave, reverse=True)[0]
     titulo = str(elegida.get("titulo") or elegida.get("gancho") or "").strip()
     if not titulo:
         raise SystemExit("auto: la idea elegida no tiene título utilizable")
