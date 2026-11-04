@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "factory/specs/timeline_actuacion.schema.json",
+  "title": "Timeline de actuación (contrato de datos entre Skills y backends de render)",
+  "description": "Salida de 3d-character-director (factory/acting/director.py). Todo backend de render (GLB three.js, mascota mesh-avatar) consume ESTE JSON sin asumir nada del generador.",
+  "type": "object",
+  "required": ["fps", "personaje", "duracion_s", "lipsync", "segmentos"],
+  "properties": {
+    "fps": {"type": "integer", "minimum": 12, "maximum": 60},
+    "duracion_s": {"type": "number", "minimum": 0.5},
+    "personaje": {
+      "type": "object",
+      "required": ["integracion"],
+      "properties": {
+        "integracion": {"type": "string", "pattern": "^(glb:|mascota:|pendiente)"},
+        "categoria": {"type": "string"}
+      }
+    },
+    "voice": {"type": "object"},
+    "lipsync": {
+      "type": "object",
+      "required": ["motor", "n_cues"],
+      "properties": {
+        "motor": {"enum": ["rhubarb", "silabico"]},
+        "n_cues": {"type": "integer", "minimum": 1}
+      }
+    },
+    "segmentos": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["i", "t0", "t1", "emocion", "intensidad", "gesto", "expresion"],
+        "properties": {
+          "i": {"type": "integer", "minimum": 0},
+          "t0": {"type": "number"},
+          "t1": {"type": "number"},
+          "emocion": {"enum": ["neutralidad", "alegria", "sorpresa", "curiosidad", "miedo", "terror",
+                               "tristeza", "enojo", "confusion", "ironia", "suspenso",
+                               "determinacion", "tranquilidad"]},
+          "intensidad": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+          "gesto": {"type": ["string", "null"]},
+          "gesto_t0": {"type": "number"},
+          "velocidad": {"type": "number"},
+          "expresion": {
+            "type": "object",
+            "description": "Bloque de parámetros de rig (factory/acting/estados.PARAMS) tras transición + gesto.",
+            "required": ["ceja_izq", "ojo_apertura", "cabeza_pitch"],
+            "properties": {
+              "ceja_izq": {"type": "number"},
+              "ceja_der": {"type": "number"},
+              "ojo_apertura": {"type": "number", "minimum": 0.0, "maximum": 1.6},
+              "mirada_dx": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+              "mirada_dy": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+              "cabeza_pitch": {"type": "number"},
+              "cabeza_yaw": {"type": "number"},
+              "cabeza_roll": {"type": "number"},
+              "postura_roll": {"type": "number"},
+              "peso": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+              "brazo_izq": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+              "brazo_der": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+              "codo_izq": {"type": "number"},
+              "codo_der": {"type": "number"},
+              "manos_levantadas": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+              "velocidad_gesto": {"type": "number", "minimum": 0.3, "maximum": 2.0},
+              "respiracion": {"type": "number", "minimum": 6, "maximum": 40},
+              "boca_base": {"type": "number", "minimum": 0.0, "maximum": 0.2}
+            }
+          },
+          "sfx": {"type": "string"},
+          "texto": {"type": "string"}
+        }
+      }
+    },
+    "blinks": {"type": "array", "items": {"type": "number"}},
+    "micro": {"type": "array", "items": {"type": "object"}},
+    "camara": {"type": "array", "items": {"type": "object"}},
+    "audio": {"type": "object"}
+  }
+}
