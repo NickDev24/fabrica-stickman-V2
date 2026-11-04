@@ -33,7 +33,7 @@ from . import config
 from .episode import Episode, STAGES
 from .gates import GateFailure, run_all_gates
 from .stages import (captacion, descubrir, derivados, guion, keyframes, narracion,
-                     publicacion, research)
+                     publicacion, research, tele_revision)
 
 
 def _slugify(texto: str) -> str:
@@ -138,8 +138,19 @@ def run_auto(args) -> None:
             print(f"  captacion no generó piezas: {cta_err}")
         publicacion.checklist(ep)
         publicacion.publicar_automatico(ep, no_publish=True)
-        publicacion.enviar_solo_video(ep)
-        publicacion.registrar(ep, estado="producido")
+        from pipeline.stages import tele_revision
+        if tele_revision.autonomia_total():
+            # autonomía desbloqueada por una aprobación previa del dueño:
+            # publica y avisa por Telegram, sin pedir revisión
+            print("  autonomía total: publico sin revisión (desbloqueada por tu aprobación)")
+            os.environ["AUTO_PUBLISH"] = "true"
+            publicacion.publicar_automatico(ep, no_publish=False, aprobado="user")
+            tele_revision.notificar_autonomia(ep.slug)
+            estado_registro = "producido_autopublicado"
+        else:
+            tele_revision.enviar_para_aprobacion(ep)
+            estado_registro = "revision_pendiente"
+        publicacion.registrar(ep, estado=estado_registro)
         print(f"\nTOTAL: {round(time.time() - t0)}s. Checklist en {ep.dir}/publicacion/checklist.md")
         print("Revisá el paquete recibido por Telegram antes de publicarlo manualmente.")
         return
@@ -171,6 +182,8 @@ def main(argv=None) -> int:
     sp.add_argument("--categoria", choices=sorted(__import__("pipeline.nichos", fromlist=["CATEGORIAS"]).CATEGORIAS),
                     help="categoría editorial; auto conserva research/urls.txt curado al crear el episodio")
 
+    sub.add_parser("escuchar-telegram",
+                   help="long-polling: reacciona a los botones de revisión y a /aprobar /rechazar /estado /precio")
     sp = sub.add_parser("nuevo"); sp.add_argument("slug"); sp.add_argument("--titulo", required=True)
     for name in ("research", "factcheck", "narrar", "keyframes", "preview",
                  "derivados", "captacion", "publicar",
@@ -192,6 +205,10 @@ def main(argv=None) -> int:
 
     if args.cmd == "auto":
         run_auto(args)
+        return 0
+
+    if args.cmd == "escuchar-telegram":
+        tele_revision.escuchar()
         return 0
 
     if args.cmd == "nuevo":

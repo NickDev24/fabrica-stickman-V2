@@ -303,20 +303,27 @@ def registrar(ep: Episode, estado: str = "producido") -> None:
     print(f"  {ep.slug} registrado en registry/published.jsonl ({estado})")
 
 
-def publicar_automatico(ep: Episode, no_publish: bool = False) -> dict:
-    """Sube los derivados a Zernio y publica. Con AUTO_PUBLISH activo (hay key en .env)
-    es publishNow; con --no-publicar queda como draft para no tocar los canales reales.
-    El toggle "contenido alterado" de YouTube Studio no tiene API: queda en el checklist."""
+def publicar_automatico(ep: Episode, no_publish: bool = False, aprobado: str | None = None) -> dict:
+    """Sube los derivados a Zernio y publica.
+
+    Con AUTO_PUBLISH activo (hay key en .env) es publishNow; con --no-publicar queda
+    como draft. La aprobación explícita del dueño (botón "✅ APROBAR Y PUBLICAR" de
+    Telegram, o "/aprobar <slug>") habilita publicar aunque la ruta sea audiovisual:
+    justamente esa "revisión humana" es lo que el dueño cambia con su toque.
+    """
     from .. import gates, zernio
     meta = ep.metadata()
     gates.gate_publicacion(meta)  # gate 7: flag sintético obligatorio antes de salir al mundo
     manifest_path = ep.artifacts / "derivados-manifest.json"
-    if manifest_path.exists() and (ep.read_json("derivados-manifest.json") or {}).get("ruta") in (
+    if aprobado != "user" and manifest_path.exists() and (ep.read_json("derivados-manifest.json") or {}).get("ruta") in (
             "keyframe", "avatar_fallback"):
         print("  ruta audiovisual en revisión: YouTube/Facebook no se publican automáticamente")
         return {"status": "revision_humana_requerida"}
-    if no_publish or not config.auto_publish():
+    if no_publish and aprobado != "user":
         print("  publicación automática OFF (AUTO_PUBLISH=false o --no-publicar): sólo borradores/checklist")
+        return {"status": "sin_publicar"}
+    if aprobado != "user" and not config.auto_publish():
+        print("  AUTO_PUBLISH del .env desactivado: no se publica")
         return {"status": "sin_publicar"}
 
     z = config.zernio_config()
