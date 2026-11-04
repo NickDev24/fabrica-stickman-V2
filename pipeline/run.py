@@ -40,23 +40,81 @@ def _slugify(texto: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", re.sub(r"\s+", "-", texto.lower().strip()))[:60].strip("-")
 
 
+def _historia_del_dia() -> tuple[str, str]:
+    """Autonomía total: la fábrica se elige SOLA la idea del día.
+
+    Orden: ranking existente en state/ideas.json (generado hoy por tendencias +
+    fact-check) -> si no existe, ideas.generar() -> gana la de mejor puntaje;
+    a igualdad, la de rank menor. Todo queda auditable: el registro de la idea
+    elegida está en state/ideas.json bajo 'elegido_auto'.
+    """
+    config.load_env()
+    ruta = config.STATE / "ideas.json"
+    cards: list[dict] = []
+    try:
+        crudo = json.loads(ruta.read_text(encoding="utf-8"))
+        cards = crudo if isinstance(crudo, list) else (
+            crudo.get("ideas") or crudo.get("cards") or [])
+    except Exception:
+        cards = []
+    if not cards:
+        from pipeline import ideas
+        print("  fábrica: no hay ranking del día — genero ideas y verifico antes de decidir")
+        cards = ideas.generar(cantidad=6)
+    if not cards:
+        raise SystemExit("auto: la fábrica no pudo generar ninguna idea verificada hoy")
+
+    def _num(c, clave, default=0.0):
+        try:
+            return float(c.get(clave, default) or default)
+        except (TypeError, ValueError):
+            return default
+
+    def _clave(c):
+        return (_num(c, "score"), -int(_num(c, "rank", 99)))
+
+    elegida = sorted(cards, key=_clave, reverse=True)[0]
+    titulo = str(elegida.get("titulo") or elegida.get("gancho") or "").strip()
+    if not titulo:
+        raise SystemExit("auto: la idea elegida no tiene título utilizable")
+    categoria = str(elegida.get("categoria") or elegida.get("nicho") or "")
+    try:
+        crudo = json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else {}
+        if not isinstance(crudo, dict):
+            crudo = {"ideas": crudo}
+        crudo["elegido_auto"] = {"titulo": titulo, "categoria": categoria,
+                                 "rank": elegida.get("rank"), "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                 "fuente": "ideas.json (ranking verificado del día)"}
+        ruta.write_text(json.dumps(crudo, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    print(f"  fábrica: idea elegida por ella misma -> {titulo}")
+    if categoria:
+        print(f"  fábrica: nicho -> {categoria}")
+    return titulo, categoria
+
+
 def run_auto(args) -> None:
     historia = args.historia
+    categoria_autonoma = ""
+    if not historia:
+        historia, categoria_autonoma = _historia_del_dia()
     slug = args.slug or _slugify(historia.split(",")[0][:48])
     if (config.PROJECTS / slug).exists():
         raise SystemExit(f"el episodio {slug!r} ya existe; pasá --slug distinto o re-usable con sus comandos por etapa")
     t0 = time.time()
-    categoria = getattr(args, "categoria", "") or ""
+    categoria = getattr(args, "categoria", "") or categoria_autonoma
     ep = Episode.create(slug, historia[0].upper() + historia[1:], categoria=categoria)
     print(f"== episodio {slug} ==")
     config.load_env()
-    if categoria:
+    categoria_curada = bool(getattr(args, "categoria", ""))
+    if categoria_curada:
         # Evita que el descubrimiento autónomo sobrescriba fuentes oficiales precuradas.
         paquete = config.PROJECTS / "_fuentes" / f"{slug}.txt"
         if not paquete.is_file():
             raise SystemExit(f"con --categoria falta el paquete curado {paquete.relative_to(config.ROOT)}")
         (ep.dir / "research" / "urls.txt").write_text(paquete.read_text(encoding="utf-8"), encoding="utf-8")
-    descubrir.descubrir(ep, historia) if not categoria else print("  fuentes institucionales curadas preservadas")
+    descubrir.descubrir(ep, historia) if not categoria_curada else print("  fuentes institucionales curadas preservadas")
     research.research(ep)
     research.factcheck(ep)
     guion.guion(ep, args.angulo)
@@ -103,7 +161,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="pipeline.run")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("auto"); sp.add_argument("--historia", required=True)
+    sp = sub.add_parser("auto"); sp.add_argument("--historia", nargs="?", default=None,
+                                                 help="tema explícito; si falta, la fábrica elijo el suyo del ranking verificado del día")
     sp.add_argument("--slug"); sp.add_argument("--angulo"); sp.add_argument("--no-publicar", action="store_true")
     sp.add_argument("--motor", choices=["keyframe"], default="keyframe",
                     help="único motor: keyframe = imágenes generadas + cámara 2.5D (stickman)")
