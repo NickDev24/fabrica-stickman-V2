@@ -80,7 +80,7 @@ def run_auto(args) -> None:
             print(f"  captacion no generó piezas: {cta_err}")
         publicacion.checklist(ep)
         publicacion.publicar_automatico(ep, no_publish=True)
-        publicacion.enviar_telegram(ep)
+        publicacion.enviar_solo_video(ep)
         publicacion.registrar(ep, estado="producido")
         print(f"\nTOTAL: {round(time.time() - t0)}s. Checklist en {ep.dir}/publicacion/checklist.md")
         print("Revisá el paquete recibido por Telegram antes de publicarlo manualmente.")
@@ -155,7 +155,8 @@ def main(argv=None) -> int:
         "derivados": lambda: derivados.derivar(ep),
         "captacion": lambda: captacion.derivar_captacion(ep),
         "publicar": lambda: publicacion.checklist(ep),
-        "enviar": lambda: publicacion.enviar_telegram(ep),
+        # envio del canal: VIDEO + texto (titulo/subtitulo/guion/hashtags), sin adjuntos
+        "enviar": lambda: publicacion.enviar_solo_video(ep),
         "registrar": lambda: publicacion.registrar(ep, estado=args.__dict__.get("estado", "producido")),
         "gates": lambda: print(run_all_gates(ep.dir)),
         "estado": lambda: print(ep.read_state()["stage_status"]),
