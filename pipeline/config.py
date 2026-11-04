@@ -13,16 +13,17 @@ FFMPEG_CRF = int(os.environ.get("FFMPEG_CRF", "23"))
 
 # Piper reemplazó a VibeVoice como motor de narración (medido: 22,5 s para 45 s de audio).
 PIPER_BIN = Path.home() / "piper-env" / "bin" / "piper"
-# Voz argentina de calidad para la narración. La x_low queda como fallback rápido
-# (medido: 1,5x tiempo real vs 7,3x de Daniela high en el B950).
-PIPER_MODEL_NAME = os.environ.get("PIPER_MODEL_NAME", "es_ES-carlfm-x_low")
+# Voz argentina de alta calidad para la narración (decisión del dueño, 2026-11-04).
+# Costo medido en el B950: 6,5x tiempo real (65 s de audio ≈ 7-8 min de síntesis).
+# La x_low queda como fallback rápido vía PIPER_MODEL_NAME en .env.
+PIPER_MODEL_NAME = os.environ.get("PIPER_MODEL_NAME", "es_AR-daniela-high")
 PIPER_MODEL_PATH = Path(os.environ.get(
-    "PIPER_MODEL_PATH", str(ROOT / "es_ES-carlfm-x_low.onnx")))
+    "PIPER_MODEL_PATH", str(ROOT / "models" / "voices" / "es_AR-daniela-high.onnx")))
 
 # Ritmo de la narración: >1 alarga los fonemas; la pausa entre frases evita el
-# atropello y da espacio para que respire el relato. La voz carlfm es más clara
-# que Daniela en el B950; 1.12/0.65 medido para que no suene apurada.
-PIPER_LENGTH_SCALE = float(os.environ.get("PIPER_LENGTH_SCALE", "1.12"))
+# atropello y da espacio para que respire el relato. Para Daniela 0.95-1.0 suena
+# natural; 1.12 era el valor calibrado para carlfm_x_low (medido 2026-11-03).
+PIPER_LENGTH_SCALE = float(os.environ.get("PIPER_LENGTH_SCALE", "1.0"))
 PIPER_SENTENCE_SILENCE = float(os.environ.get("PIPER_SENTENCE_SILENCE", "0.65"))
 
 # Identidad visual del canal: un solo personaje reutilizable (NO una persona real).
@@ -33,8 +34,8 @@ MASCOTA_ESTUDIO = ROOT / "assets" / "mascota" / "pulso-estudio.png"
 SHORT_W, SHORT_H, SHORT_FPS, SHORT_SUB = 1080, 1920, 25, 62
 # El presentador nunca puede faltar mas de este tramo (regla medida: 3,5 s).
 AUSENCIA_MAX_S = 3.5
-# El Short va mas suelto que el documental: pausa entre frases corta y ritmo ligeramente arriba.
-PIPER_LENGTH_SCALE_SHORT = float(os.environ.get("PIPER_LENGTH_SCALE_SHORT", "1.12"))
+# El Short va igual de natural que el documental; subir el ritmo de Daniela la hace apurada.
+PIPER_LENGTH_SCALE_SHORT = float(os.environ.get("PIPER_LENGTH_SCALE_SHORT", "1.0"))
 
 EDGE_TTS_VOICE = "es-AR-TomasNeural"
 
