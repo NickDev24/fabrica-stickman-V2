@@ -62,7 +62,7 @@ def proponer(tema: str, categoria: str, formato_clave: str, senal: dict | None =
         "titulos de otros canales; afirmar algo que no se pueda verificar. Las preguntas_abiertas "
         "son el pedido de verificacion: lo que no se verifique no entra al guion."
     )
-    card = llm.chat_json([{"role": "user", "content": prompt}], max_tokens=900,
+    card = llm.chat_json([{"role": "user", "content": prompt}], max_tokens=2048,
                          tag="idea", temperature=0.85)
     card.update({
         "tema": tema, "categoria": categoria, "formato": formato_clave,

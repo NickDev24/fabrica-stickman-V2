@@ -6,9 +6,10 @@ verifica que las páginas existan y escribe research/urls.txt. No requiere inter
 """
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
-from urllib.parse import quote_plus, unquote, urlparse
+from urllib.parse import quote, quote_plus, unquote, urlparse
 
 import requests
 
@@ -36,8 +37,18 @@ def _queries(historia: str, episode: str) -> list[str]:
     )
     answer = llm.chat([{"role": "user", "content": prompt}], max_tokens=400,
                       tag="queries", episode=episode)
-    found = re.findall(r'"([^"]{8,120})"', answer)
-    return found[:5] or [historia]
+    qs = None
+    m = re.search(r"\{.*\}|\[.*\]", answer, re.S)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            qs = data.get("queries") if isinstance(data, dict) else data
+        except (json.JSONDecodeError, AttributeError):
+            qs = None
+    if not qs:
+        qs = [historia]
+    limpios = [re.sub(r"\s+", " ", str(q)).strip() for q in qs if str(q).strip()]
+    return limpios[:5] or [historia]
 
 
 def _tokens(texto: str) -> set[str]:
@@ -71,7 +82,7 @@ def _ddg(query: str) -> list[tuple[str, str]]:
     """(url, título). El título viene gratis en el HTML que ya se baja y es lo único que
     dice de qué trata el resultado: por host no se puede saber."""
     hallados: list[tuple[str, str]] = []
-    for base in ("https://lite.duckduckgo.com/lite/", "https://html.duckduckgo.com/html/"):
+    for base in ("https://html.duckduckgo.com/html/", "https://lite.duckduckgo.com/lite/"):
         try:
             # curl_cffi con huella de Chrome: DDG responde 403 al cliente "python-requests".
             r = web.obtener(base, data={"q": query}, timeout=20)
@@ -91,15 +102,20 @@ def _ddg(query: str) -> list[tuple[str, str]]:
 
 
 def _wikipedia(query: str) -> list[tuple[str, str]]:
-    try:
-        r = requests.get(
-            "https://es.wikipedia.org/w/api.php",
-            params={"action": "query", "list": "search", "srsearch": query,
-                    "srlimit": 5, "format": "json"}, headers=UA, timeout=20)
-        base = "https://es.wikipedia.org/wiki/"
-        return [(base + quote_plus(x["title"]), x["title"]) for x in r.json()["query"]["search"]]
-    except (requests.RequestException, KeyError):
-        return []
+    """Español + inglés: la enciclopedia rinde en ambos idiomas y es la fuente más estable."""
+    out: list[tuple[str, str]] = []
+    for sitio in ("es.wikipedia.org", "en.wikipedia.org"):
+        try:
+            r = requests.get(
+                f"https://{sitio}/w/api.php",
+                params={"action": "query", "list": "search", "srsearch": query,
+                        "srlimit": 5, "format": "json"}, headers=UA, timeout=20)
+            base = f"https://{sitio}/wiki/"
+            out += [(base + quote(x["title"].replace(" ", "_"), safe="_()':,&"),
+                     x["title"]) for x in r.json()["query"]["search"]]
+        except (requests.RequestException, KeyError):
+            continue
+    return out
 
 
 def _viable(url: str) -> bool:
