@@ -19,3 +19,6 @@ avatar_4f/
 stick/
 stick-gen/
 awesome-opus5-5-videos/
+
+# secretos e historial local
+.env
