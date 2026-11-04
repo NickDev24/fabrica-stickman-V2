@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import requests
@@ -122,6 +123,98 @@ Estado de gates: {json.dumps(gates_out, ensure_ascii=False, indent=2)}
     ep.set_stage("publicacion", "checklist_listo")
     print(f"  checklist -> {path.relative_to(ep.dir)} | publicar sigue BLOQUEADO hasta aprobación humana")
     return path
+
+
+def texto_de_envio(ep: Episode) -> str:
+    """El copy que el dueño pidió en el envío: título + subtítulo + guion completo + hashtags.
+
+    Sin archivos .md ni .json: el texto viaja como caption del video y como mensaje de
+    texto del chat (Telegram corta captions a 1024 y mensajes a 4096 caracteres).
+    """
+    sources = ep.read_json("sources.json")
+    fuentes = _fuentes_md(sources)
+    titulo = ep.read_state()["title"]
+    meta = ep.metadata()
+    subtitulo = str(meta.get("angle") or "").strip() or \
+        "Pulso Curioso — historias sorprendentes con contexto y fuentes verificables"
+    guion_texto = ep.read_text("script.txt")
+    guion_texto = "\n".join(l for l in guion_texto.splitlines()
+                            if not l.lstrip().startswith("#")).strip()
+    guion_texto = re.sub(r"\n{3,}", "\n\n", guion_texto)
+    hashtags = "#PulsoCurioso #curiosidades #documental"
+    nicho = str(ep.read_state().get("categoria", "")).replace("-", "")
+    if nicho:
+        hashtags += f" #{nicho}"
+    partes = [
+        f"🎬 {titulo}",
+        f"— {subtitulo} —",
+        "",
+        guion_texto,
+        "",
+        "Fuentes verificables:",
+        fuentes,
+        "",
+        hashtags,
+    ]
+    return "\n".join(partes)
+
+
+def _partir_mensaje(texto: str, tope: int = 4000) -> list[str]:
+    """Corta por dobles saltos sin romper palabras para el techo de 4096 del sendMessage."""
+    cortes: list[str] = []
+    pendiente = texto
+    while len(pendiente) > tope:
+        corte = pendiente.rfind("\n\n", 0, tope)
+        if corte < 200:
+            corte = pendiente.rfind(" ", 0, tope)
+        if corte < 200:  # sin separador útil: corte duro, nunca un slice negativo
+            corte = tope
+        cortes.append(pendiente[:corte].strip())
+        pendiente = pendiente[corte:].strip()
+    if pendiente:
+        cortes.append(pendiente)
+    return cortes
+
+
+def enviar_solo_video(ep: Episode) -> None:
+    """Envío del dueño: el VIDEO terminado (con caption) + el texto completo del capítulo.
+
+    Sin adjuntos .md/.json: el guion completo y los hashtags van como mensajes de texto
+    del propio chat, no como documentos.
+    """
+    config.load_env()
+    token = os.environ.get(config.TELEGRAM_TOKEN_ENV, "") or os.environ.get("TOKEN_BOT", "")
+    chat = os.environ.get(config.TELEGRAM_CHAT_ENV, "") or os.environ.get("CHAT_ID", "")
+    if not token or not chat:
+        raise SystemExit(f"Faltan {config.TELEGRAM_TOKEN_ENV}/{config.TELEGRAM_CHAT_ENV} en .env")
+    base = f"https://api.telegram.org/bot{token}/"
+    finales = []
+    for art in sorted((ep.dir / "artifacts").glob("render_*.json")):
+        nombre = (ep.read_json(art.name) or {}).get("archivo")
+        if nombre:
+            finales.append(ep.dir / "renders" / nombre)
+    if not finales:
+        raise SystemExit("enviar_solo_video: no hay render terminado en artifacts/render_*.json")
+    video = max(finales, key=lambda f: f.stat().st_mtime)
+    if not video.exists():
+        raise SystemExit(f"enviar_solo_video: no existe {video}")
+    copia = texto_de_envio(ep)
+    lineas = copia.splitlines()
+    # caption del video: título + subtítulo + hashtags (guion completo va como mensaje)
+    caption_video = "\n".join([lineas[0], lineas[1], "", lineas[-1]])[:1024]
+    with video.open("rb") as fh:
+        r = requests.post(base + "sendVideo",
+                          data={"chat_id": chat, "caption": caption_video,
+                                "supports_streaming": "true"},
+                          files={"video": (video.name, fh, "video/mp4")}, timeout=300)
+    if not r.ok or not r.json().get("ok"):
+        raise RuntimeError(f"sendVideo falló: HTTP {r.status_code} {r.text[:200]}")
+    for cuerpo in _partir_mensaje(copia):
+        r = requests.post(base + "sendMessage",
+                          data={"chat_id": chat, "text": cuerpo}, timeout=120)
+        if not r.ok or not r.json().get("ok"):
+            raise RuntimeError(f"sendMessage falló: HTTP {r.status_code} {r.text[:200]}")
+    print(f"  telegram: video {video.name} + texto completo y hashtags enviados (sin adjuntos)")
 
 
 def enviar_telegram(ep: Episode, caption: str = "") -> None:
