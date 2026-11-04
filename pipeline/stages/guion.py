@@ -33,6 +33,57 @@ def elegir_angulo(ep: Episode, previos: list[dict]) -> str:
     return best
 
 
+def hook_violado(script: str) -> str | None:
+    """Deteca el anti-patrón de hook en la PRIMERA oración del guion (sin LLM).
+
+    El contrato editorial (ACTO 1 del prompt) exige arrancar en el conflicto/dato más
+    fuerte: "la SEC tuvo las pruebas y las ignoró ocho años". Un hook que arranca con
+    fecha o contexto ("En 2005, un...") no frena el scroll — así salió el primer
+    episodio generado, y ningún chequeo lo partaba: se escribe el chequeo que falta.
+    """
+    prosa = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
+    prosa = re.sub(r"\s+", " ", prosa).strip()
+    if not prosa:
+        return "el guion no tiene prosa (sólo título)"
+    primera = re.split(r"(?<=[.!?])\s+", prosa, maxsplit=1)[0]
+    if re.match(r"^En\s+(el a[ñn]o\s+)?(1[5-9]\d{2}|20\d{2})\b", primera, re.I):
+        return f"hook arranca con fecha/contexto: {primera[:80]!r}"
+    if re.match(r"^En\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|"
+                r"setiembre|octubre|noviembre|diciembre)\b", primera, re.I):
+        return f"hook arranca con fecha/contexto: {primera[:80]!r}"
+    if re.match(r"^(la historia|este es el caso|en un mundo|hay una|\barcamos\b)",
+                primera, re.I):
+        return f"hook de contexto, no de conflicto: {primera[:80]!r}"
+    return None
+
+
+def reparar_hook(script: str, titulo: str, angulo: str) -> str:
+    """Reescribe la PRIMERA oración con el LLM, manteniendo el resto del guion intacto."""
+    prosa = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
+    prosa = re.sub(r"\s+", " ", prosa).strip()
+    primera, resto = re.split(r"(?<=[.!?])\s+", prosa, maxsplit=1) or (prosa, "")
+    prompt = (
+        f"Canal de documentales animados. Título: {titulo}. Ángulo: {angulo}.\n"
+        "La PRIMERA oración del guion arranca con fecha/contexto (anti-patrón: no frena el "
+        "scroll). Reescribí SOLO esa oración para que abra con el conflicto o el dato más "
+        "fuerte (sujeto + hecho + consecuencia), sin fecha al inicio, máximo 18 palabras, "
+        "español rioplatense. La fecha-contexto puede aparecer recién en la segunda oración.\n\n"
+        f"ORACIÓN ACTUAL: {primera}\n"
+        f"CONTEXTOS DEL GUION (para no inventar hechos): {resto[:600]}\n\n"
+        "Devolvé SOLO la nueva oración, sin comillas ni preámbulos."
+    )
+    nueva = ""
+    try:
+        nueva = llm.chat([{"role": "user", "content": prompt}], max_tokens=90,
+                         temperature=0.6, tag="hook-fix", episode="")[:400].strip()
+    except Exception:  # noqa: BLE001 — sin LLM no se repara; que decida el gate
+        return script
+    nueva = re.split(r"(?<=[.!?])\s+", nueva)[0].strip()
+    if not nueva or hook_violado(nueva + " " + resto):
+        return script  # no se pisa el guion con algo peor; el gate decide el destino
+    return script.replace(primera, nueva, 1)
+
+
 def guion(ep: Episode, angulo: str | None = None) -> None:
     previos = gates.load_publicados(exclude_slug=ep.slug)
     if not angulo:
@@ -108,6 +159,19 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
             temperature=0.5, tag="guion-fix", episode=ep.slug).strip()
         gates.gate_anti_duplicado(script, previos)
 
+    razon = hook_violado(script)
+    if razon:
+        print(f"  GATE HOOK: violado ({razon[:90]}) — reescribiendo la primera oración…")
+        try:
+            script = reparar_hook(script, titulo, angulo)
+        except Exception as llm_exc:  # noqa: BLE001 — el LLM puede estar sin cuota
+            print(f"  hook: no se pudo reparar con LLM ({str(llm_exc)[:90]})")
+        razon2 = hook_violado(script)
+        if razon2:
+            raise SystemExit(f"GATE HOOK BLOQUEA EL EPISODIO: {razon2}\n"
+                             "El reto de retención empieza en el segundo 0: se re-corre "
+                             "la etapa guion con el LLM disponible (regla ACTO 1).")
+        print(f"  GATE HOOK: PASS (primera oración reescrita)")
     ep.write_text("script.txt", f"# {titulo}\n\n{script}\n")
     meta = ep.metadata()
     meta["angle"] = angulo
