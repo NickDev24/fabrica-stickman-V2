@@ -61,7 +61,8 @@ COMPARE_LAST_N = 5
 #  - Aion Labs: https://www.aionlabs.ai/docs/api-reference (api.aionlabs.ai/v1, OpenAI-compatible)
 QWEN_DEFAULT_BASE_URL = "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
 
-PROVIDER_ORDER = ["ollama", "mistral", "qwen", "aionlabs", "cloudflare", "bedrock"]
+PROVIDER_ORDER = ["ollama", "mistral", "qwen", "aionlabs", "cloudflare", "bedrock", "gemini"]
+GEMINI_BUDGET_FILE = STATE / "llm_budget.json"
 DISABLED_PROVIDERS: dict = {}
 
 PROVIDERS = {
@@ -95,6 +96,18 @@ PROVIDERS = {
     "cloudflare": {"url": "", "key_env": "CLOUDFLARED_WORKER_AI",
                    "model": os.environ.get("CLOUDFLARED_MODEL", "@cf/meta/llama-3.1-8b-instruct"),
                    "api": "cloudflare"},
+    # Respaldo PAGADO de último recurso (proyecto con $5 de saldo y billing activado):
+    # sólo entra cuando TODAS las rutas gratis fallo (ollama + remores sin cuota).
+    # Intro $0.75/1M in, $3.75/1M out hasta 31-dic-2026; desde 1-ene: $1.50/$7.50.
+    # Tope duro: estado/llm_budget.json corta el uso al superar GEMINI_PRESUPUESTO_USD_MES.
+    "gemini": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "key_env": "GEMINI_API_KEY",
+        "model": os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
+        "precio_in_usd_mtok": float(os.environ.get("GEMINI_INPUT_USD_MTOK", "0.75")),
+        "precio_out_usd_mtok": float(os.environ.get("GEMINI_OUTPUT_USD_MTOK", "3.75")),
+        "presupuesto_usd_mes": float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.50")),
+    },
     # Fallback local sin costo. Usa modelos que ya están instalados en Ollama;
     # no descarga modelos ni llama a Ollama Cloud.
     "ollama": {
@@ -138,6 +151,7 @@ def cloudflare_cfg() -> dict:
 
 # Reparto por tarea: verificación con un proveedor INDEPENDIENTE del que escribió (misión §3).
 TASK_ROUTES = {
+    # ollama primero siempre (gratis e ilimitado); gemini cierra cada ruta (pago, con tope)
     "default": ["ollama"],
     "investigacion": ["ollama"],
     "guion": ["ollama"],

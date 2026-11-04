@@ -214,6 +214,40 @@ def _iniciar_ollama_si_hace_falta() -> str:
     return "Ollama está instalado pero el servicio local no inició"
 
 
+def _gasto_gemini() -> float:
+    """USD gastados en el mes con el fallback pagado (estado/llm_budget.json)."""
+    try:
+        mes = time.strftime("%Y-%m")
+        d = json.loads(config.GEMINI_BUDGET_FILE.read_text(encoding="utf-8"))
+        return float(d.get(mes, {}).get("usd", 0.0))
+    except Exception:
+        return 0.0
+
+
+def _registrar_gasto_gemini(cfg: dict, body: dict) -> None:
+    """Estima tokens y actualiza el ledger mensual; nunca lanza (el gasto ya ocurrió)."""
+    try:
+        usage = body.get("usage") or body.get("usageMetadata") or {}
+        tin = int(usage.get("prompt_tokens") or usage.get("promptTokenCount") or 0)
+        tout = int(usage.get("completion_tokens") or usage.get("candidatesTokenCount") or 0)
+        costo = tin * cfg["precio_in_usd_mtok"] / 1e6 + tout * cfg["precio_out_usd_mtok"] / 1e6
+        mes = time.strftime("%Y-%m")
+        saldo = {"usd": round(_gasto_gemini() + costo, 6),
+                 "llamadas": 0, "tokens_in": tin, "tokens_out": tout}
+        p = config.GEMINI_BUDGET_FILE
+        data = {}
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+        prev = data.get(mes, {})
+        saldo["llamadas"] = int(prev.get("llamadas", 0)) + 1
+        saldo["tokens_in"] = int(prev.get("tokens_in", 0)) + tin
+        saldo["tokens_out"] = int(prev.get("tokens_out", 0)) + tout
+        data[mes] = saldo
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001 — jamás romper una respuesta por bookkeeping
+        pass
+
+
 def _call_provider(name: str, messages: list[dict], temperature: float,
                    max_tokens: int) -> tuple[dict | None, str]:
     import os
@@ -282,14 +316,20 @@ def chat(messages: list[dict], *, temperature: float = 0.4, max_tokens: int = 15
     corrida entera en una máquina de 2 núcleos.
     """
     route = list(config.TASK_ROUTES.get(task) or config.TASK_ROUTES["default"])
-    # APIs externas quedan fuera del modo sin gasto; sólo se agregan por opt-in explícito.
     import os
-    if os.environ.get("ALLOW_REMOTE_LLM", "").strip().lower() in ("1", "true", "yes", "on"):
+    on = lambda k: os.environ.get(k, "").strip().lower() in ("1", "true", "yes", "on")
+    remote: list[str] = []
+    if on("ALLOW_REMOTE_LLM"):
         remote = ["mistral", "qwen", "cloudflare"]
-        if os.environ.get("ALLOW_AIONLABS", "").strip().lower() in ("1", "true", "yes", "on"):
+        if on("ALLOW_AIONLABS"):
             remote.insert(2, "aionlabs")
-        if os.environ.get("ALLOW_PAID_LLM", "").strip().lower() in ("1", "true", "yes", "on"):
+        if on("ALLOW_PAID_LLM"):
             remote.append("bedrock")
+    if on("ALLOW_PAID_LLM"):
+        # opt-in pago: Gemini destapa primero (rápido, y su saldo dura meses con el
+        # tope GEMINI_PRESUPUESTO_USD_MES); los gratis quedan de respaldo
+        route = ["gemini", *remote, "ollama"]
+    elif remote:
         route = [*remote, "ollama"]
     failures = []
     for name in route:
