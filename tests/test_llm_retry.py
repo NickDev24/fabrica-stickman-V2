@@ -35,6 +35,10 @@ def fake(monkeypatch):
     monkeypatch.setitem(config.PROVIDERS, "fake",
                         {"url": "http://proveedor.test/chat", "key_env": "FAKE_KEY", "model": "m"})
     monkeypatch.setenv("FAKE_KEY", "k")
+    # hermético: el .env real tiene ALLOW_PAID_LLM=1 y sus llaves pagan;
+    # sin esto la ruta sintética se pisa con la ruta de producción y el conteo cambia
+    for k in ("ALLOW_REMOTE_LLM", "ALLOW_PAID_LLM", "ALLOW_AIONLABS"):
+        monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(llm, "_health_record", lambda *a, **k: None)
     monkeypatch.setattr(llm, "cache_get", lambda *a, **k: None)
     monkeypatch.setattr(llm, "cache_put", lambda *a, **k: None)
