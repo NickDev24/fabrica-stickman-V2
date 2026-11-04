@@ -47,6 +47,14 @@ MODELOS = {
         "params": lambda w, h, steps, seed: {"width": w, "height": h,
                                              "steps": steps or 4, "seed": seed},
     },
+    "gemini-imagen": {
+        # Nano Banana 2 Lite (2026): $0.0336/imagen 1K; recomendado por Google para proyectos nuevos
+        "nombre": "gemini-3.1-flash-lite-image",
+        "respuesta": "gemini",
+        "extension": "jpg",
+        "params": lambda w, h, steps, seed: {},
+        "precio_usd": float(os.environ.get("GEMINI_IMAGE_PRICE_USD", "0.0336")),
+    },
     "sdxl": {
         "nombre": "@cf/stabilityai/stable-diffusion-xl-base-1.0",
         "respuesta": "png",
@@ -115,6 +123,32 @@ def huella(modelo: str, prompt: str, w: int, h: int, seed: int, steps: int | Non
     return hashlib.sha256(semilla.encode("utf-8")).hexdigest()[:40]
 
 
+def _fallback_pagado_ok(err) -> bool:
+    """Cloudflare sin cuota y opt-in pago habilitado -> usar Gemini en este corte."""
+    if os.environ.get("ALLOW_PAID_LLM", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return False
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return False
+    try:
+        cap = float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.5"))
+        if llm._gasto_gemini() + float(MODELOS["gemini-imagen"]["precio_usd"]) > cap:
+            return False
+    except Exception:
+        return False
+    low = str(err or "").lower()
+    return "daily free allocation" in low or "429" in low
+
+
+def _disponible_gemini() -> tuple[bool, str]:
+    """El opt-in pago es explícito: sin ALLOW_PAID_LLM=1 ni GEMINI_API_KEY, no."""
+    config.load_env()
+    if os.environ.get("ALLOW_PAID_LLM", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return False, "ALLOW_PAID_LLM no habilitado (gemini-imagen es pago)"
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return False, "sin GEMINI_API_KEY en .env"
+    return True, ""
+
+
 def disponible() -> tuple[bool, str]:
     import os
     config.load_env()
@@ -131,7 +165,10 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
     """Un keyframe a disco. Devuelve la ruta; si ya existe en caché no llama a la red."""
     if modelo not in MODELOS:
         raise KeyError(f"modelo de imagen desconocido: {modelo}")
-    ok, por = disponible()
+    if modelo == "gemini-imagen":
+        ok, por = _disponible_gemini()
+    else:
+        ok, por = disponible()
     if not ok:
         raise RuntimeError(f"motor de imágenes no configurado: {por}")
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -152,22 +189,60 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
     if forzar and clave.exists():
         clave.unlink()
 
-    usage_path, usage = _cuota_diaria()
-    cfg = MODELOS[modelo]
-    cuerpo = {"prompt": prompt, **cfg["params"](w, h, steps, seed)}
-    r, err = llm._post(_url(modelo), cuerpo,
-                       {"Authorization": f"Bearer {_token()}",
-                        "Content-Type": "application/json"}, f"workers_ai:{modelo}")
-    if r is None:
-        raise RuntimeError(f"imagen falló ({modelo}): {err}")
-    if cfg["respuesta"] == "json":
-        datos = r.json()
-        b64 = (datos.get("result") or {}).get("image") or (datos.get("result") or {}).get("b64_json")
-        if not b64:
-            raise RuntimeError(f"respuesta sin imagen: {str(datos)[:200]}")
-        crudos = base64.b64decode(b64)
+    if modelo == "gemini-imagen":
+        cfg = MODELOS[modelo]
+        cap = float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.5"))
+        gasto = llm._gasto_gemini()
+        if gasto + cfg["precio_usd"] > cap:
+            raise RuntimeError(
+                f"imagen gemini: presupuesto mensual agotado "
+                f"({gasto:.2f} USD tope {cap:.2f} USD)")
+        body_payload = {"contents": [{"role": "user",
+                                      "parts": [{"text": prompt}]}],
+                        "generationConfig": {"responseModalities": ["IMAGE"]}}
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{cfg['nombre']}:generateContent")
+        rr = llm.requests.post(url, timeout=180,
+                               headers={"X-goog-api-key": os.environ["GEMINI_API_KEY"],
+                                        "Content-Type": "application/json"},
+                               json=body_payload)
+        if rr.status_code != 200:
+            raise RuntimeError(f"imagen gemini falló: HTTP {rr.status_code} {rr.text[:200]}")
+        raw_b64 = None
+        for c in rr.json().get("candidates", []):
+            for p in (c.get("content") or {}).get("parts", []):
+                inl = p.get("inlineData") or p.get("inline_data")
+                if inl and inl.get("data"):
+                    raw_b64 = inl["data"]
+                    break
+            if raw_b64:
+                break
+        if not raw_b64:
+            raise RuntimeError(f"gemini no devolvió imagen: {str(rr.json())[:200]}")
+        crudos = base64.b64decode(raw_b64)
+        llm._registrar_gasto_extra(cfg["precio_usd"], cfg["nombre"])
     else:
-        crudos = r.content
+        usage_path, usage = _cuota_diaria()
+        cfg = MODELOS[modelo]
+        cuerpo = {"prompt": prompt, **cfg["params"](w, h, steps, seed)}
+        r, err = llm._post(_url(modelo), cuerpo,
+                           {"Authorization": f"Bearer {_token()}",
+                            "Content-Type": "application/json"}, f"workers_ai:{modelo}")
+        if r is None:
+            if _fallback_pagado_ok(err):
+                print("  cloudflare sin cuota -> fallback pago a gemini-imagen (un corte)")
+                return generar(prompt, salida, modelo="gemini-imagen", w=w, h=h,
+                               seed=seed, steps=steps, forzar=forzar)
+            raise RuntimeError(f"imagen falló ({modelo}): {err}")
+        if cfg["respuesta"] == "json":
+            datos = r.json()
+            b64 = ((datos.get("result") or {}).get("image")
+                   or (datos.get("result") or {}).get("b64_json"))
+            if not b64:
+                raise RuntimeError(f"respuesta sin imagen: {str(datos)[:200]}")
+            crudos = base64.b64decode(b64)
+        else:
+            crudos = r.content
     if len(crudos) < 8000:
         raise RuntimeError(f"imagen sospechosamente chica ({len(crudos)} bytes) en {modelo}")
     es_jpeg = crudos.startswith(b"\xff\xd8\xff")

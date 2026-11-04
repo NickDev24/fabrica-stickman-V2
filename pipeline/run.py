@@ -107,7 +107,7 @@ def main(argv=None) -> int:
     sp.add_argument("--slug"); sp.add_argument("--angulo"); sp.add_argument("--no-publicar", action="store_true")
     sp.add_argument("--motor", choices=["keyframe"], default="keyframe",
                     help="único motor: keyframe = imágenes generadas + cámara 2.5D (stickman)")
-    sp.add_argument("--modelo", default="flux", choices=["flux"],
+    sp.add_argument("--modelo", default="flux", choices=["flux", "gemini-imagen"],
                     help="modelo de imagen de Workers AI (único admitido: flux)")
     sp.add_argument("--categoria", choices=sorted(__import__("pipeline.nichos", fromlist=["CATEGORIAS"]).CATEGORIAS),
                     help="categoría editorial; auto conserva research/urls.txt curado al crear el episodio")
@@ -118,7 +118,7 @@ def main(argv=None) -> int:
                  "enviar", "registrar", "gates", "estado"):
         sp = sub.add_parser(name); sp.add_argument("slug")
         if name == "keyframes":
-            sp.add_argument("--modelo", default="flux", choices=["flux"],
+            sp.add_argument("--modelo", default="flux", choices=["flux", "gemini-imagen"],
                             help="modelo de imagen de Workers AI (único admitido: flux)")
             sp.add_argument("--contacto", action="store_true",
                             help="sólo beats + keyframes + hoja de contactos, sin renderizar")

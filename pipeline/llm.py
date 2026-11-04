@@ -248,6 +248,30 @@ def _registrar_gasto_gemini(cfg: dict, body: dict) -> None:
         pass
 
 
+def _registrar_gasto_extra(costo_usd: float, detalle: str) -> None:
+    """Ledger compartido de costo Pro (texto + imágenes) en state/llm_budget.json.
+
+    Los gastos de imagen se suman a `usd` del mes, así el tope GEMINI_PRESUPUESTO_USD_MES
+    cubre TODO lo pago del canal — no es por sesión ni por modelo.
+    """
+    try:
+        mes = time.strftime("%Y-%m")
+        p = config.GEMINI_BUDGET_FILE
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        prev = data.get(mes, {})
+        data[mes] = {
+            "usd": round(float(prev.get("usd", 0.0)) + costo_usd, 6),
+            "llamadas": int(prev.get("llamadas", 0)),
+            "tokens_in": int(prev.get("tokens_in", 0)),
+            "tokens_out": int(prev.get("tokens_out", 0)),
+            "imagenes": int(prev.get("imagenes", 0)) + 1,
+            "ultimo_detalle": detalle[:80],
+        }
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001 — jamás romper una respuesta por bookkeeping
+        pass
+
+
 def _call_provider(name: str, messages: list[dict], temperature: float,
                    max_tokens: int) -> tuple[dict | None, str]:
     import os
@@ -279,6 +303,10 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
         if not texto:
             return None, "cache con sólo razonamiento (se vuelve a pedir)"
         return {"text": texto, "latency": 0.0, "cost": 0.0, "cache": True}, None
+    if name == "gemini" and _gasto_gemini() >= cfg.get("presupuesto_usd_mes", 4.5):
+        return None, (f"presupuesto mensual de Gemini agotado "
+                      f"({_gasto_gemini():.2f} USD >= "
+                      f"{cfg.get('presupuesto_usd_mes', 4.5):.2f} USD)")
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -301,6 +329,8 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
     text = _sin_razonamiento(text)
     if not text or not text.strip():
         return None, "respuesta vacía (el presupuesto se fue en razonamiento)"
+    if name == "gemini":
+        _registrar_gasto_gemini(cfg, body)
     _health_record(name, "ok", "respondió chat completions")
     cache_put(name, payload, text)
     return {"text": text, "latency": latency, "cost": 0.0, "cache": False}, None
