@@ -54,14 +54,25 @@ def _base() -> str:
 
 
 def _video_final(ep: Episode) -> Path:
-    finales = []
-    for art in sorted((ep.dir / "artifacts").glob("render_*.json")):
+    """El mp4 núcleo del episodio; busca primero lo declarado, después el disco."""
+    # 1) lo declarado por el render del maestro keyframe (contrato: ruta/keyframe)
+    for art in sorted((ep.dir / "artifacts").glob("render_*.json"),
+                      key=lambda a: (a.name != "render_keyframes.json", a.name)):
         nombre = (ep.read_json(art.name) or {}).get("archivo")
-        if nombre:
-            finales.append(ep.dir / "renders" / nombre)
-    if not finales:
-        raise SystemExit("tele_revision: no hay render terminado (artifacts/render_*.json)")
-    return max(finales, key=lambda p: p.stat().st_mtime)
+        if not nombre:
+            continue
+        candidatos = [ep.dir / "renders" / nombre, ep.dir / "derivados" / nombre]
+        for f in candidatos:
+            if f.exists() and f.stat().st_size > 1_000_000:
+                return f
+    # 2) cualquier video razonable, priorizando el maestro keyframe
+    carpetas = [ep.dir / "renders", ep.dir / "derivados"]
+    mp4 = [p for c in carpetas if c.is_dir() for p in c.glob("*.mp4")
+           if p.stat().st_size > 1_000_000]
+    if not mp4:
+        raise SystemExit("tele_revision: no hay render terminado")
+    maestro = [p for p in mp4 if "keyframe" in p.name]
+    return max(maestro or mp4, key=lambda p: p.stat().st_mtime)
 
 
 def _pregunta(ep: Episode) -> str:
