@@ -55,9 +55,11 @@ def _base() -> str:
 
 def _video_final(ep: Episode) -> Path:
     """El mp4 núcleo del episodio; busca primero lo declarado, después el disco."""
-    # 1) lo declarado por el render del maestro keyframe (contrato: ruta/keyframe)
+    # 1) lo declarado por el render del maestro (contrato: ruta/keyframe);
+    #    si hay versión collage (recortes aprobados), esa gana: es el master + overlay
     for art in sorted((ep.dir / "artifacts").glob("render_*.json"),
-                      key=lambda a: (a.name != "render_keyframes.json", a.name)):
+                      key=lambda a: (a.name != "render_collage.json",
+                                     a.name != "render_keyframes.json", a.name)):
         nombre = (ep.read_json(art.name) or {}).get("archivo")
         if not nombre:
             continue
