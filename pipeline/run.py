@@ -239,8 +239,8 @@ def main(argv=None) -> int:
         "derivados": lambda: derivados.derivar(ep),
         "captacion": lambda: captacion.derivar_captacion(ep),
         "publicar": lambda: publicacion.checklist(ep),
-        # envio del canal: VIDEO + texto (titulo/subtitulo/guion/hashtags), sin adjuntos
-        "enviar": lambda: publicacion.enviar_solo_video(ep),
+        # envio del canal: VIDEO + TITULO + SUBTITULO + botones Aprobar/Reprobar
+        "enviar": lambda: tele_revision.enviar_para_aprobacion(ep),
         "registrar": lambda: publicacion.registrar(ep, estado=args.__dict__.get("estado", "producido")),
         "collage-propuesto": lambda: collage.proponer(ep),
         "gates": lambda: print(run_all_gates(ep.dir)),
