@@ -33,7 +33,7 @@ from . import config
 from .episode import Episode, STAGES
 from .gates import GateFailure, run_all_gates
 from .stages import (captacion, descubrir, derivados, guion, keyframes, narracion,
-                     publicacion, research, tele_revision)
+                     publicacion, research, tele_revision, collage)
 
 
 def _slugify(texto: str) -> str:
@@ -194,7 +194,8 @@ def main(argv=None) -> int:
     sp = sub.add_parser("nuevo"); sp.add_argument("slug"); sp.add_argument("--titulo", required=True)
     for name in ("research", "factcheck", "narrar", "keyframes", "preview",
                  "derivados", "captacion", "publicar",
-                 "enviar", "registrar", "gates", "estado"):
+                 "enviar", "registrar", "gates", "estado",
+                 "collage-propuesto"):
         sp = sub.add_parser(name); sp.add_argument("slug")
         if name == "keyframes":
             sp.add_argument("--modelo", default="flux", choices=["flux", "gemini-imagen"],
@@ -241,6 +242,7 @@ def main(argv=None) -> int:
         # envio del canal: VIDEO + texto (titulo/subtitulo/guion/hashtags), sin adjuntos
         "enviar": lambda: publicacion.enviar_solo_video(ep),
         "registrar": lambda: publicacion.registrar(ep, estado=args.__dict__.get("estado", "producido")),
+        "collage-propuesto": lambda: collage.proponer(ep),
         "gates": lambda: print(run_all_gates(ep.dir)),
         "estado": lambda: print(ep.read_state()["stage_status"]),
     }
