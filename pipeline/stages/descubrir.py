@@ -6,6 +6,7 @@ verifica que las páginas existan y escribe research/urls.txt. No requiere inter
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import unicodedata
@@ -33,9 +34,11 @@ def _queries(historia: str, episode: str) -> list[str]:
         "Para investigar con rigor documental ESTE tema y escribir un guion verificado: "
         f"\"{historia}\". Generá 5 consultas de búsqueda (mezcla español e inglés) apuntando a "
         "fuentes primarias/institucionales (NASA, NOAA, universidades, museos, revistas "
-        "científicas, agencias). Devolvé sólo JSON: {\"queries\":[\"...\",\"...\"]}"
+        "científicas, agencias). Las consultas deben ser ESPECÍFICAS: incluí el año y palabras "
+        "clave del suceso ('results', 'official', 'report', según corresponda); nada de una sola "
+        "palabra como \"midterm\". Devolvé sólo JSON: {\"queries\":[\"...\",\"...\"]}"
     )
-    answer = llm.chat([{"role": "user", "content": prompt}], max_tokens=400,
+    answer = llm.chat([{"role": "user", "content": prompt}], max_tokens=800,
                       tag="queries", episode=episode)
     qs = None
     m = re.search(r"\{.*\}|\[.*\]", answer, re.S)
@@ -101,6 +104,37 @@ def _ddg(query: str) -> list[tuple[str, str]]:
     return out
 
 
+def _bing(query: str) -> list[tuple[str, str]]:
+    """Bing como segunda vía: los resultados traen enlaces útiles de .gov/.edu/medios.
+
+    Los href de Bing vienen envueltos en redirecciones (`/ck/a?...u=a1<base64url>`);
+    se decodifica el destino real. Dominios gov/edu institucionales suelen
+    alcanzables y son independientes de Wikipedia (gate 1 pide dominios distintos).
+    """
+    try:
+        r = web.obtener("https://www.bing.com/search",
+                        params={"q": query, "ensearch": "1", "setlang": "en-US",
+                                "mkt": "en-US"},
+                        timeout=20)
+    except requests.RequestException:
+        return []
+    out: list[tuple[str, str]] = []
+    for href in re.findall(r'<h2><a[^>]*href="([^"]+)"', r.text):
+        href = href.replace("&amp;", "&")
+        m = re.search(r"[?&]u=a1([^&]+)", href)
+        if not m:
+            continue
+        try:
+            b64 = m.group(1)
+            b64 += "=" * (-len(b64) % 4)
+            url = base64.urlsafe_b64decode(b64).decode("utf-8", "ignore")
+        except Exception:
+            continue
+        if url.startswith("http"):
+            out.append((url, ""))
+    return out
+
+
 def _wikipedia(query: str) -> list[tuple[str, str]]:
     """Español + inglés: la enciclopedia rinde en ambos idiomas y es la fuente más estable."""
     out: list[tuple[str, str]] = []
@@ -138,7 +172,7 @@ def descubrir(ep, historia: str, max_urls: int = 10) -> list[str]:
     vistos: set[str] = set()
     candidatos: list[tuple[int, str]] = []
     for q in _queries(historia, ep.slug):
-        for u, titulo in _ddg(q) + _wikipedia(q):
+        for u, titulo in _ddg(q) + _wikipedia(q) + _bing(q):
             u = u.split("#")[0]
             if u in vistos:
                 continue
