@@ -252,9 +252,11 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
     ext_real = "jpg" if es_jpeg else "png"
     if ext_real != ext:
         raise RuntimeError(f"Workers AI devolvió {ext_real.upper()} para {modelo}, se esperaba .{ext}")
-    usage_path, usage = _cuota_diaria()
     clave.write_bytes(crudos)
-    _contabilizar_cuota(usage_path, usage)
+    if modelo != "gemini-imagen":
+        # el tope diario es una regla de Cloudflare; el pago nunca debe toparse con él
+        usage_path, usage = _cuota_diaria()
+        _contabilizar_cuota(usage_path, usage)
     salida.parent.mkdir(parents=True, exist_ok=True)
     salida.write_bytes(crudos)
     return salida
