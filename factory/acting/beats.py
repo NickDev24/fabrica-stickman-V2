@@ -254,7 +254,7 @@ def _arco_escenas(texto: str) -> list[str]:
         return ["interior", "interior", "interior", "pasillo", "interior", "interior"]
     if re.search(r"\b(código|software|internet|comput|tecnolog|algoritmo|inteligencia artificial)\w*", t):
         return ["interior", "tienda", "pasillo", "calle"]
-    return ["interior", "calle", "tienda", "pasillo"]
+    return ["interior", "interior", "interior", "interior"]
 
 
 def _accion_documental(texto: str, indice: int) -> str:

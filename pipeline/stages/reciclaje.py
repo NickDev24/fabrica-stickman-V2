@@ -99,8 +99,9 @@ def construir_indice(max_proyectos: int = 50) -> list[dict]:
 def reutilizar(prompt: str, *, escena: str = "", accion: str = "",
                 plano: str = "", limit: int = 1) -> list[Path]:
     """Devuelve 0..limit imágenes ACEPTABLES; de lo contrario no fuerza imagen incongruente."""
-    if not prompt.strip():
-        return []
+    if not escena or not accion or not plano:
+        if not prompt.strip():
+            return []  # sin datos para evaluar: no fuerzo nada
     indice = construir_indice()
     candidatos: list[tuple[float, Path]] = []
     for e in indice:
