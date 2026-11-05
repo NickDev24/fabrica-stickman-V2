@@ -13,6 +13,11 @@ FFMPEG_CRF = int(os.environ.get("FFMPEG_CRF", "23"))
 
 # Piper reemplazó a VibeVoice como motor de narración (medido: 22,5 s para 45 s de audio).
 PIPER_BIN = Path.home() / "piper-env" / "bin" / "piper"
+# Voz CapCut-like (Microsoft neural): elegida por el dueño 2026-11-04 para todos los
+# capítulos; la voz por defecto ahora es edge-tts:es-AR-TomasNeural (allowlist-eada).
+EDGE_TTS_BIN = Path(os.environ.get("EDGE_TTS_BIN", str(Path.home() / ".local" / "bin" / "edge-tts")))
+EDGE_TTS_VOICE = os.environ.get("EDGE_TTS_VOICE", "es-AR-TomasNeural")
+VOZ_PREFERIDA = os.environ.get("VOZ_PREFERIDA", f"edge-tts:{EDGE_TTS_VOICE}")
 # Voz argentina de alta calidad para la narración (decisión del dueño, 2026-11-04).
 # Costo medido en el B950: 6,5x tiempo real (65 s de audio ≈ 7-8 min de síntesis).
 # La x_low queda como fallback rápido vía PIPER_MODEL_NAME en .env.

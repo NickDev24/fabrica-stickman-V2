@@ -57,8 +57,23 @@ def _dur(wav: Path) -> float:
     return float(json.loads(r.stdout)["format"]["duration"])
 
 
+def _edge(text: str, out: Path, voice: str) -> None:
+    """edge-tts (Microsoft neural, CapCut-like) a WAV 22050/mono PCM para el master."""
+    if not config.EDGE_TTS_BIN.exists():
+        raise SystemExit(f"edge-tts no está en {config.EDGE_TTS_BIN} — "
+                         f"instalalo en ~/.local/bin o apuntá EDGE_TTS_BIN")
+    tmp = out.with_suffix(".edge.mp3")
+    subprocess.run([str(config.EDGE_TTS_BIN), "--voice", voice,
+                    "--text", _marcar_prosodia(text),
+                    "--write-media", str(tmp)], check=True, timeout=300)
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(tmp),
+                    "-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", str(out)],
+                   check=True)
+    tmp.unlink(missing_ok=True)
+
+
 def narrar(ep: Episode, voice_ref: str | None = None) -> None:
-    voice_ref = voice_ref or f"piper:{config.PIPER_MODEL_NAME}"
+    voice_ref = voice_ref or config.VOZ_PREFERIDA
     gates.gate_voz(voice_ref)  # GATE 2: sólo voces propias del canal
 
     script = ep.read_text("script.txt")
@@ -78,7 +93,7 @@ def narrar(ep: Episode, voice_ref: str | None = None) -> None:
                 raise SystemExit(f"No existe el modelo Piper {config.PIPER_MODEL_PATH}; instalarlo o definir PIPER_MODEL_PATH.")
             _piper(_marcar_prosodia(text), out)
         else:
-            raise SystemExit("edge-tts aún no está instalado; la ruta activa es Piper.")
+            _edge(text, out, voice_ref.split(":", 1)[1])
         durations.append(_dur(out))
         print(f"  seg {i+1}/{len(segs)}: {durations[-1]:.1f}s")
     synth_s = round(time.time() - t0, 1)
