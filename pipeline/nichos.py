@@ -343,6 +343,9 @@ def canal_de(categoria: str) -> dict:
     """Perfil completo del nicho con defaults; canal = marca/voz/estilo por categoría."""
     perfil = dict(CATEGORIAS.get(categoria) or {})  # defensive: nicho sin registrar
     perfil["canal"] = "Pulso Curioso"
+    # guion.py (FixKeyError): siempre proveer nombre/categoría — un nicho desconocido no
+    # debe reventar con KeyError en medio de la cadena de producción
+    perfil["nombre"] = str(perfil.get("nombre") or categoria or "general")
     perfil["promesa"] = ("Una curiosidad sorprendente, con hechos verificables, contexto y una "
                           "explicación propia que deje algo útil al espectador.")
     perfil.setdefault("ficción", False)
