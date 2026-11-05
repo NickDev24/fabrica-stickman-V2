@@ -136,7 +136,10 @@ def _preparar_keyframes(ep: Episode, bs: list[dict], *, modelo: str = "flux",
         if out.exists() and not forzar:
             ruta.append(out)
             continue
-        imagen.generar(prompt, out, modelo=modelo, forzar=forzar)
+        imagen.generar(prompt, out, modelo=modelo, forzar=forzar,
+                       escena=str(b.get("escena", "")),
+                       accion=str(b.get("accion", "")),
+                       plano=str(b.get("plano", "")))
         nuevos += 1
         ruta.append(out)
     return bs, {"frames": len(ruta), "generados_nuevos": nuevos,

@@ -12,11 +12,14 @@ sin cuota, y un mapa por palabras clave es auditable escena por escena.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
-BEAT_MIN_S = 1.35
-BEAT_MAX_S = 2.20
+# Cadencia más relajada (3,5–5,5 s/plano): de 40 cortes/min a 11–17 cortes/min.
+# El dueño pidió explícitamente MENOS imágenes y más profesionalismo — no novedad.
+BEAT_MIN_S = float(os.environ.get("KF_BEAT_MIN_S", "3.5"))
+BEAT_MAX_S = float(os.environ.get("KF_BEAT_MAX_S", "5.5"))
 
 # orden = prioridad; la primera regla que pega gana
 ACCIONES: list[tuple[str, str]] = [

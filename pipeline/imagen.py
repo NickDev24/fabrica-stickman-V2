@@ -161,7 +161,8 @@ def disponible() -> tuple[bool, str]:
 
 def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
             h: int = 1024, seed: int = 777, steps: int | None = None,
-            forzar: bool = False) -> Path:
+            forzar: bool = False, escena: str = "", accion: str = "",
+            plano: str = "") -> Path:
     """Un keyframe a disco. Devuelve la ruta; si ya existe en caché no llama a la red."""
     if modelo not in MODELOS:
         raise KeyError(f"modelo de imagen desconocido: {modelo}")
@@ -173,6 +174,18 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
         raise RuntimeError(f"motor de imágenes no configurado: {por}")
     CACHE.mkdir(parents=True, exist_ok=True)
     huella_img = huella(modelo, prompt, w, h, seed, steps)
+    # reciclaje: reutiliza imagen equivalente ya producida; coste 0 y sin imágenes duplicadas
+    if not forzar:
+        try:
+            from .stages import reciclaje
+            recs = reciclaje.reutilizar(prompt, escena=escena, accion=accion,
+                                        plano=plano, limit=1)
+        except Exception:
+            recs = []
+        if recs:
+            salida.parent.mkdir(parents=True, exist_ok=True)
+            salida.write_bytes(recs[0].read_bytes())
+            return salida
     ext = extension(modelo)
     clave = CACHE / f"{huella_img}.{ext}"
     # Migración no destructiva: las primeras versiones guardaban el JPEG de Flux
