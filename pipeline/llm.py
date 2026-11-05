@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import re
 import shutil
@@ -303,10 +304,12 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
         if not texto:
             return None, "cache con sólo razonamiento (se vuelve a pedir)"
         return {"text": texto, "latency": 0.0, "cost": 0.0, "cache": True}, None
-    if name == "gemini" and _gasto_gemini() >= cfg.get("presupuesto_usd_mes", 4.5):
-        return None, (f"presupuesto mensual de Gemini agotado "
-                      f"({_gasto_gemini():.2f} USD >= "
-                      f"{cfg.get('presupuesto_usd_mes', 4.5):.2f} USD)")
+    if name == "gemini":
+        tope = float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.50"))
+        gasto = _gasto_gemini()
+        if gasto >= tope:
+            return None, (f"presupuesto mensual de Gemini agotado "
+                          f"({gasto:.2f} USD >= {tope:.2f} USD)")
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
