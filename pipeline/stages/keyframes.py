@@ -70,13 +70,9 @@ def _ts(s: float) -> str:
 
 
 def _recorte(fps: bool = True) -> str:
-    """Del cuadrado de flux al lienzo 9:16 con margen para mover la cámara.
-
-    El `fps` va sólo en el plano animado: con un único PNG de salida ffmpeg intenta
-    escribir cada fotograma duplicado sobre el mismo archivo y revienta (exit 234).
-    """
-    x = (KF_S - KF_916_W) // 2
-    base = f"crop={KF_916_W}:{KF_S}:{x}:0,scale={BASE_W}:{BASE_H}"
+    """9:16 centrado para CUALQUIER fuente (flux 1024², gemini 1408×768…) al lienzo 810×1440."""
+    base = ("crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)'"
+            ":x='(iw-ow)/2':y='(ih-oh)/2',scale={BASE_W}:{BASE_H}").format(BASE_W=BASE_W, BASE_H=BASE_H)
     return f"{base},fps={KF_FPS}" if fps else base
 
 
