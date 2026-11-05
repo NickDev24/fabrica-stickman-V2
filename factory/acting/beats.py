@@ -342,6 +342,63 @@ def _rotar_pose(d: dict, i: int, escena: str, historial: list[str]) -> None:
     historial.append(elegida)
 
 
+# Escena/planos con mayor impacto de scroll: el keyframe del gancho (0-3 s) muestra
+# SIEMPRE el momento de máxima intensidad de la historia (flash-forward), no una
+# casa nostálgica. Vocabulario de conflicto visual (stickman-video-director: el
+# keyframe 1 es el "hero shot", la imagen más caótica/atrapante del episodio).
+_PLANO_IMPACTO = {"primer_plano", "detalle", "contrapicado", "cenital"}
+_CAOS = re.compile(
+    r"(?:\d|llor|grit|grito|corre|corría|huy|escap|caos|terror|pánico|sangre|fuego|"
+    r"explos|colapso|derrumb|miles|nadie|nunca|jamás|imposible|brutal|declar|"
+    r"borr|vació|blank|perd|muer|muerte|forgot|olvid)")
+
+
+def fijar_gancho_visual(beats: list[dict]) -> None:
+    """El PRIMER keyframe = flash-forward a la escena de mayor intensidad del episodio.
+
+    Contrato (dueño + stickman-video-director): en los primeros 3 segundos el video
+    narra la pregunta gancho Y muestra la escena más caótica/atrapante de la historia.
+    la imagen es más fuerte que el texto: si la pregunta frena el scroll, la imagen lo
+    convierte en clic. El plano cercano (primer_plano/detalle) + cámara agresiva
+    (shake/push) + flash pegan el golpe visual; el texto del beat no se toca.
+    """
+    if not beats or beats[0].get("gancho"):
+        return
+    gancho = beats[0]
+    if len(beats) < 2:
+        gancho["gancho"] = True
+        return
+    # candidatos: intensidad narrativa (CAOS en el texto) + planos de impacto;
+    # nunca el futuro inmediato (i=1) porque entonces el flash-forward no desvela nada
+    def _intensidad(b: dict) -> int:
+        texto = f"{b.get('texto', '')} {b.get('contexto', '')} {b.get('oracion', '')}"
+        puntos = 2 if _CAOS.search(texto) else 0
+        if b.get("plano") in _PLANO_IMPACTO:
+            puntos += 2
+        if "flash" in b.get("fx", []):
+            puntos += 1
+        return puntos
+    pool = [b for b in beats[2:]] or [beats[1]]
+    elegido = max(pool, key=_intensidad)
+    if elegido is gancho:
+        return
+    d = gancho.get("direccion") or {}
+    de = elegido.get("direccion") or {}
+    gancho["escena"] = elegido.get("escena", gancho.get("escena"))
+    gancho["accion"] = elegido.get("accion", gancho.get("accion"))
+    gancho["plano"] = elegido.get("plano") if elegido.get("plano") in _PLANO_IMPACTO else "primer_plano"
+    gancho["mov"] = "shake" if gancho["accion"] in ("corre", "golpea", "grita", "salta") else "push"
+    gancho["fx"] = list(dict.fromkeys(list(gancho.get("fx", [])) + ["flash"]))
+    gancho["gancho"] = True
+    base_idea = (str(de.get("idea") or elegido.get("oracion") or d.get("idea", "")).strip()
+                 or str(d.get("idea", "")))
+    d["idea"] = ("flashforward to the story's most intense moment — " + base_idea)[:150]
+    d["prop"] = de.get("prop") or d.get("prop", "")
+    d["camara"] = gancho["mov"]
+    gancho["continuidad"] = {"desde": "cold open — acción máxima", "transicion": "corte al presente",
+                             "hacia": d.get("prop", "")}
+
+
 def dirigir(beats: list[dict]) -> None:
     """Añade progresión de escena, pose y continuidad serial al storyboard determinista."""
     historial_poses: list[str] = []
@@ -364,6 +421,7 @@ def dirigir(beats: list[dict]) -> None:
                                 "hacia":d["prop"]}
         else:
             b["continuidad"] = {"desde":"gancho visual inmediato", "transicion":"entrada directa al objeto", "hacia":d["prop"]}
+    fijar_gancho_visual(beats)
 
 
 def plan(segments: list[dict], emociones: list[str] | None = None,

@@ -355,7 +355,12 @@ def armar_prompt_dirigido(beat: dict) -> str:
         expr = _expresion(e, accion_txt)
         if expr:
             cara = f"face: {expr}"[:48]
-    partes = [ident[:95], e["estilo"][:62], cara, escenario[:34],
+    # KEYFRAME GANCHO (0-3 s): flash-forward al momento de máxima intensidad. El "\n"
+    # literal instruye composición dense; el prompt de cabecera pega el impacto primero,
+    # que es lo único que el ojo lee en el scroll.
+    cabecera = ("chaotic striking flash-forward shot" if beat.get("gancho")
+                else "")
+    partes = [cabecera, ident[:95], e["estilo"][:62], cara, escenario[:34],
               f"evidence-centered, {accion}"[:40], f"{plano_txt}; {cam}"[:46],
               f"scene: {idea}; key object: {prop}; action: {acting}; reveal: {reveal}; motion: {movimiento}",
               "black ink, warm white, red accent, clear readable shapes, no generated lettering",

@@ -57,6 +57,30 @@ def hook_violado(script: str) -> str | None:
     return None
 
 
+def hook_pregunta(script: str) -> str | None:
+    """Contrato del GANCHO DORADO (stickman-video-director, latido 1): pregunta que retiene.
+
+    Los primeros 3 segundos narrados deben ser una PREGUNTA en segunda persona que abra
+    un vacío de curiosidad: concreta, contraintuitiva, SIN resolverla. Las medias reglas:
+    - 4 a 16 palabras (Tomas narra ~2,5 palabras/segundo: 3 segundos ≈ 8 palabras).
+    - Debe cerrar con signo de interrogación.
+    - Prohibida la platitud genérica "¿Sabías que...?" (no abre vacío: invita a scroll).
+    """
+    prosa = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
+    prosa = re.sub(r"\s+", " ", prosa).strip()
+    if not prosa:
+        return "el guion no tiene prosa (sólo título)"
+    primera = re.split(r"(?<=[.!?])\s+", prosa, maxsplit=1)[0]
+    if not primera.rstrip().endswith("?"):
+        return f"el gancho no es pregunta: {primera[:80]!r}"
+    palabras = [w for w in re.sub(r"[¿?¡!.,;:—–]", " ", primera).split() if w]
+    if not 4 <= len(palabras) <= 16:
+        return f"pregunta gancho fuera de rango ({len(palabras)} palabras): {primera[:70]!r}"
+    if re.search(r"^\s*[¿?]\s*sab[ií](as|es)\s+que\b", primera, re.I):
+        return "platitud prohibida '¿Sabías que...?': no abre vacío, invita a scroll"
+    return None
+
+
 def reparar_hook(script: str, titulo: str, angulo: str) -> str:
     """Reescribe la PRIMERA oración con el LLM, manteniendo el resto del guion intacto."""
     prosa = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
@@ -64,13 +88,16 @@ def reparar_hook(script: str, titulo: str, angulo: str) -> str:
     primera, resto = re.split(r"(?<=[.!?])\s+", prosa, maxsplit=1) or (prosa, "")
     prompt = (
         f"Canal de documentales animados. Título: {titulo}. Ángulo: {angulo}.\n"
-        "La PRIMERA oración del guion arranca con fecha/contexto (anti-patrón: no frena el "
-        "scroll). Reescribí SOLO esa oración para que abra con el conflicto o el dato más "
-        "fuerte (sujeto + hecho + consecuencia), sin fecha al inicio, máximo 18 palabras, "
-        "español rioplatense. La fecha-contexto puede aparecer recién en la segunda oración.\n\n"
+        "La PRIMERA oración del guion viola el GANCHO DORADO (latido 1 del motor de 5 "
+        "latidos): arranca con fecha/contexto o es una afirmación plana, y eso no frena "
+        "el scroll. Reescribí SOLO esa oración como una PREGUNTA que retiene: segunda "
+        "persona (vos/tú), apuntada al vacío de curiosidad de esta historia, concreta y "
+        "contraintuitiva, máximo 14 palabras, cerrada con signo ?, español rioplatense. "
+        "Prohibido '¿Sabías que...?', prohibido arrancar con fecha, prohibido resolver la "
+        "pregunta. La fecha-contexto puede aparecer recién en la segunda oración.\n\n"
         f"ORACIÓN ACTUAL: {primera}\n"
         f"CONTEXTOS DEL GUION (para no inventar hechos): {resto[:600]}\n\n"
-        "Devolvé SOLO la nueva oración, sin comillas ni preámbulos."
+        "Devolvé SOLO la nueva pregunta, sin comillas ni preámbulos."
     )
     nueva = ""
     try:
@@ -79,7 +106,8 @@ def reparar_hook(script: str, titulo: str, angulo: str) -> str:
     except Exception:  # noqa: BLE001 — sin LLM no se repara; que decida el gate
         return script
     nueva = re.split(r"(?<=[.!?])\s+", nueva)[0].strip()
-    if not nueva or hook_violado(nueva + " " + resto):
+    # la reparación DEBE devolver pregunta: si no, no se pisa el guion (decide el gate)
+    if not nueva or not nueva.rstrip().endswith("?") or hook_violado(nueva + " " + resto):
         return script  # no se pisa el guion con algo peor; el gate decide el destino
     return script.replace(primera, nueva, 1)
 
@@ -105,6 +133,22 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
     regla_ficcion = ("(3) la historia es FICCIÓN: los personajes y sucesos propios se "
                      "inventan libremente pero respetando las ANCLAS listadas " if es_fic else "")
 
+    # Motor de retención (stickman-video-director): 5 latidos con el GANCHO DORADO en 0-3 s.
+    motor_retencion = (
+        "MOTOR DE 5 LATIDOS (retención de alta completitud, obligatorio): "
+        "LATIDO 1 GANCHO DORADO en los primeros 3 segundos narrados: UNA PREGUNTA de "
+        "segunda persona (vos/tú) que abra un vacío de curiosidad — concreta y "
+        "contraintuitiva, máximo 14 palabras, con signo ?. Prohibido '¿Sabías que...?', "
+        "prohibido arrancar con fecha, prohibido resolver la pregunta ahí. "
+        "LATIDO 2 QUIEBRE DE LA ASUNCIÓN: dentro de las 3 primeras frases post-gancho, "
+        "mostrá que lo que la gente cree sobre esto está equivocado o incompleto. "
+        "LATIDO 3 AL DESCUBRIMIENTO: cada bloque entrega UN dato nuevo como si fuera un "
+        "secreto interno (micro-cliffhanger al cierre de cada bloque). "
+        "LATIDO 4 LA VERDAD FINA: la revelación completa, el giro, sin atajos. "
+        "LATIDO 5 ELEVACIÓN + DEBATE: qué significa para el espectador HOY y una pregunta "
+        "final abierta de debate para los comentarios. "
+    )
+
     prompt = (
         f"Guionista PROPIETARIO del canal paraguas '{perfil['canal']}' — categoría: {perfil['nombre']}.\n"
         f"Promesa editorial: {perfil.get('promesa', 'curiosidades sorprendentes verificadas y explicadas con claridad')}.\n"
@@ -115,17 +159,15 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
         f"Título: {titulo}\n"
         f"ÁNGULO NARRATIVO (lente de enfoque, NO licencia para inventar): {angulo}\n"
         f"Afirmaciones verificadas — ÚNICO material de hecho permitido:\n{claims}\n\n"
+        f"{motor_retencion}"
         "Reglas estrictas: (1) todo enunciado fáctico debe derivar de las afirmaciones listadas; "
         "prohibido inventar testimonios, personajes, escenas privadas, cifras o fechas que no estén "
         "en ellas — si el ángulo sugiere algo que los datos no cubren, reformulá el ángulo hacia lo "
         "que sí sostienen. (2) si usás una imagen o reconstrucción didáctica, marcala como tal "
         "('la imaginación reconstruye...', 'los testigos de la época describían...' sólo si una "
-        "afirmación lo respalda) " + regla_ficcion + " (4) formato de retención: 500-700 palabras en 3 actos — "
-        "ACTO 1 gancho: la PRIMERA FRASE es el conflicto o el resultado más fuerte (ej.: 'la SEC "
-        "tuvo las pruebas y las ignoró durante años'), NUNCA una fecha ni contexto ('En 2005...'). "
-        "Nombrá al sujeto y el hecho en esa frase; recién después ordená cronológicamente. "
-        "Máximo 4 frases para plantar el misterio; ACTO 2 desarrollo: cada bloque suma UN dato nuevo y termina con un micro-cliffhanger "
-        "que tire al siguiente; ACTO 3 giro/cierre: qué significa hoy + una pregunta abierta final. "
+        "afirmación lo respalda) " + regla_ficcion + " (4) formato: 500-700 palabras siguiendo los 5 "
+        "latidos de arriba; la PRIMERA FRASE del texto es la pregunta gancho del LATIDO 1 "
+        "(nada antes de ella: ni contexto, ni fecha, ni saludo). "
         "Frases cortas, ritmo oral, segunda persona cuando aporte ('mirá el mapa', 'pensá esto'). "
         "Bloques de 1-3 frases separados por línea en blanco. "
         "NUNCA uses listas, títulos de sección ni markdown: prosa narrada, lista para texto-a-voz."
@@ -159,19 +201,24 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
             temperature=0.5, tag="guion-fix", episode=ep.slug).strip()
         gates.gate_anti_duplicado(script, previos)
 
-    razon = hook_violado(script)
-    if razon:
-        print(f"  GATE HOOK: violado ({razon[:90]}) — reescribiendo la primera oración…")
+    # --- GANCHO DORADO (0-3 s): anti-patrón + pregunta que retiene, con 2 intentos de
+    # reparación (si el LLM está vivo). Sin pregunta, no hay episodio: todo el resto del
+    # guion es invisible si el espectador scrollea en el segundo 2.
+    for intento_hook in range(2):
+        razon = hook_violado(script) or hook_pregunta(script)
+        if not razon:
+            print("  GATE GANCHO DORADO: PASS (primera oración = pregunta de retención)")
+            break
+        print(f"  GATE GANCHO DORADO: violado ({razon[:90]}) — reparando la primera oración…")
         try:
             script = reparar_hook(script, titulo, angulo)
         except Exception as llm_exc:  # noqa: BLE001 — el LLM puede estar sin cuota
             print(f"  hook: no se pudo reparar con LLM ({str(llm_exc)[:90]})")
-        razon2 = hook_violado(script)
-        if razon2:
-            raise SystemExit(f"GATE HOOK BLOQUEA EL EPISODIO: {razon2}\n"
-                             "El reto de retención empieza en el segundo 0: se re-corre "
-                             "la etapa guion con el LLM disponible (regla ACTO 1).")
-        print(f"  GATE HOOK: PASS (primera oración reescrita)")
+    else:
+        razon_final = hook_violado(script) or hook_pregunta(script) or "razón desconocida"
+        raise SystemExit(f"GATE GANCHO DORADO BLOQUEA EL EPISODIO: {razon_final}\n"
+                         "La retención empieza en el segundo 0: re-corré la etapa guion "
+                         "con el LLM disponible (motor de 5 latidos, LATIDO 1).")
     ep.write_text("script.txt", f"# {titulo}\n\n{script}\n")
     meta = ep.metadata()
     meta["angle"] = angulo

@@ -63,6 +63,8 @@ def checklist(ep: Episode) -> Path:
 - Título: `{title}`
 - Descripción lista para pegar:
 {desc}
+- Miniatura/portada: `derivados/portada.jpg` — imagen del clímax + pregunta gancho;
+  subirla como miniatura personalizada (es la imagen que frena el scroll y la que se ve en pausa)
 - [ ] Revisar video, fuentes, audio y subtítulos antes de subir
 - [ ] Marcar contenido alterado o sintético en YouTube Studio
 {fallback_note}

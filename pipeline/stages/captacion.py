@@ -143,31 +143,84 @@ def _corte_trailer(ep: Episode, main: Path, t0: float, segundos: float,
             "peso_mb": round(dst.stat().st_size / 1048576, 2)}
 
 
-def _miniatura_hook(ep: Episode, kf_dir: Path, beat: dict, dst: Path) -> Path | None:
-    """Miniatura con curiosity gap: la imagen del beat ganador + una promesa sin resolver.
+def _texto_portada_de(script: str, titulo: str) -> str:
+    """Texto de la portada scroll-stopper: la PREGUNTA gancho, máximo 6 palabras.
 
-    La palabra gigante es la del POP del beat (palabra/enunciado por beat) — se corta
-    antes de cerrar la promesa para que el título NUNCA resuelva del todo.
+    La pregunta del guion (primer oración) es el gancho dorado exacto que narra el
+    video; si no es pregunta (episodios viejos), cae al título. Sin cerrar el giro:
+    la portada pregunta, el video responde (curiosity gap para el scroll).
     """
-    imagen = kf_dir / f"kf-{beat['i']:03d}.jpg"
-    if not imagen.exists():
-        imagen = kf_dir / f"kf-{beat['i']:03d}.png"
-    if not imagen.exists():
+    import re
+    prosa = "\n".join(l for l in script.splitlines() if not l.lstrip().startswith("#"))
+    prosa = re.sub(r"\s+", " ", prosa).strip()
+    primera = re.split(r"(?<=[.!?])\s+", prosa, maxsplit=1)[0] if prosa else ""
+    base = primera if primera.rstrip().endswith("?") else (titulo or "")
+    palabras = [w for w in re.sub(r"[¿?¡!.,;:—–\"']", " ", base).split() if w][:6]
+    if not palabras:
+        return (titulo or "").strip() or "Pulso Curioso"
+    mid = (len(palabras) + 1) // 2
+    return " ".join(palabras[:mid]) + "\n" + " ".join(palabras[mid:])
+
+
+def _texto_portada(ep: Episode) -> str:
+    return _texto_portada_de(ep.read_text("script.txt"), ep.read_state().get("title", ""))
+
+
+def _imagen_portada_ia(ep: Episode, beat: dict) -> Path | None:
+    """Portada generada IClusive con el motor de imágenes (sólo si PORTADA_LLM=1).
+
+    El keyframe del clímax ya existe y suele bastar (coste cero); la imagen dedicada
+    es pago (~$0.034) y sólo se pide si el dueño la habilita explícitamente. Con
+    presupuesto agotado o sin env, se usa el keyframe existente: la portada NUNCA
+    bloquea la etapa.
+    """
+    import os
+    if os.environ.get("PORTADA_LLM", "").strip().lower() not in ("1", "true", "yes", "on"):
         return None
-    # Promesa truncada: hasta 5 palabras en 2 líneas, sin cerrar el giro (curiosity gap)
-    contexto = str(beat.get("contexto", beat.get("texto", "")))
-    palabras = contexto.split()[:5]
-    linea1 = " ".join(palabras[:3])
-    linea2 = " ".join(palabras[3:]) + ("…" if len(palabras) >= 5 else "")
-    promesa = f"{linea1}\n{linea2}".replace(":", " ").replace("'", "").replace("%", " ")
-    txt = ep.dir / "artifacts" / "thumb-hook.txt"
+    from .. import imagen
+    beat_portada = dict(beat)
+    beat_portada["gancho"] = True
+    beat_portada["plano"] = "primer_plano"
+    beat_portada["fx"] = list(dict.fromkeys(list(beat.get("fx", [])) + ["flash"]))
+    prompt = imagen.armar_prompt_dirigido(beat_portada)
+    for modelo in ("flux", "gemini-imagen"):  # flux gratis si hay cuota; gemini de respaldo
+        try:
+            out = ep.dir / "assets" / "kf" / f"portada-ia.{imagen.extension(modelo)}"
+            return imagen.generar(prompt, out, modelo=modelo,
+                                  escena=str(beat.get("escena", "")),
+                                  accion=str(beat.get("accion", "")),
+                                  plano="primer_plano")
+        except Exception:  # noqa: BLE001 — el respaldo pasa al keyframe del clímax
+            continue
+    return None
+
+
+def _portada_scroll(ep: Episode, kf_dir: Path, beat: dict, dst: Path) -> Path | None:
+    """PORTADA del episodio: lo que YouTube/Facebook muestran en pausa/scroll.
+
+    Receta (thumbnail kit de stickman-video-director + brief del dueño): la imagen del
+    beat más intenso de la historia + la PREGUNTA gancho en amarillo con borde negro,
+    texto grande arriba (zona segura de móvil), rara vez >6 palabras. Si se pidió una
+    imagen generada a medida (PORTADA_LLM=1) y salió, esa es la base.
+    """
+    imagen_beat = kf_dir / f"kf-{beat['i']:03d}.jpg"
+    if not imagen_beat.exists():
+        imagen_beat = kf_dir / f"kf-{beat['i']:03d}.png"
+    base_ia = _imagen_portada_ia(ep, beat)
+    if base_ia is not None and base_ia.exists():
+        imagen_beat = base_ia
+    if not imagen_beat.exists():
+        return None
+    txt = ep.dir / "artifacts" / "portada.txt"
     txt.parent.mkdir(parents=True, exist_ok=True)
-    txt.write_text(promesa, encoding="utf-8")
-    vf = ("scale=1080:1920:flags=lanczos,"
+    txt.write_text(_texto_portada(ep), encoding="utf-8")
+    # el texto vive en el tercio superior: los controles de pausa y el título del feed
+    # de YouTube están abajo, y el face del stickman queda visible al centro.
+    vf = ("scale=1080:1920:flags=lanczos,eq=contrast=1.08:saturation=1.1,"
           "drawtext=textfile=" + str(txt) + ":fontfile=/usr/share/fonts/truetype/dejavu/"
-          "DejaVuSans-Bold.ttf:fontcolor=yellow:fontsize=78:x=(w-text_w)/2:y=220:"
-          "line_spacing=14:borderw=6:bordercolor=black")
-    _run(["ffmpeg", "-y", "-v", "error", "-i", str(imagen), "-vf", vf,
+          "DejaVuSans-Bold.ttf:fontcolor=yellow:fontsize=110:x=(w-text_w)/2:y=170:"
+          "line_spacing=18:borderw=8:bordercolor=black:box=1:boxcolor=black@0.25:boxborderw=24")
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(imagen_beat), "-vf", vf,
           "-frames:v", "1", str(dst)])
     return dst
 
@@ -229,7 +282,7 @@ def derivar_captacion(ep: Episode) -> dict:
                        out / "trailer-a-facebook-reel.mp4")
     b = _corte_trailer(ep, main, esc_b["t0"], SEGUNDOS_TRAILER,
                        out / "trailer-b-youtube-short.mp4")
-    miniatura = _miniatura_hook(ep, kf_dir, esc_a, out / "thumb-hook.jpg")
+    miniatura = _portada_scroll(ep, kf_dir, esc_a, out / "portada.jpg")
 
     hist = _historieta(ep, bs, escenas)
     programacion = {
@@ -247,6 +300,11 @@ def derivar_captacion(ep: Episode) -> dict:
             {"pieza": "historieta_facebook", "archivo": hist["archivo"],
              "plataforma": "Facebook (post de texto)", "hora": HORA_HISTORIETA_FB,
              "texto_cta": CTA},
+            {"pieza": "portada_scroll", "archivo": miniatura.name if miniatura else None,
+             "plataforma": "Miniatura YouTube / tapa de pausa (Facebook/Telegram)",
+             "hora": None, "texto_cta": None,
+             "nota": "imagen del beat más intenso + pregunta gancho; subir como thumbnail "
+                     "en YouTube Studio y portada del Reel"},
             {"pieza": "capitulo_completo_youtube", "archivo": str(main.relative_to(ep.dir)),
              "plataforma": "YouTube", "hora": HORA_CAPITULO, "texto_cta": None},
         ],
@@ -265,6 +323,7 @@ def derivar_captacion(ep: Episode) -> dict:
           f"-> YouTube Short {HORA_SHORT_YT}")
     print(f"  captacion: historieta {hist['archivo']} ({hist['vinetas']} viñetas) -> FB {HORA_HISTORIETA_FB}")
     if miniatura:
-        print(f"  captacion: miniatura hook -> {miniatura.relative_to(ep.dir)}")
+        print(f"  captacion: PORTADA scroll-stop -> {miniatura.relative_to(ep.dir)} "
+              f"(imagen del clímax + pregunta gancho, 1080×1920)")
     print(f"  captacion: programación -> publicacion/programacion.json (revisar antes de enviar)")
     return programacion
