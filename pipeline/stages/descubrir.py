@@ -186,11 +186,18 @@ def descubrir(ep, historia: str, max_urls: int = 10) -> list[str]:
     candidatos.sort(key=lambda x: -x[0])
 
     elegidas: list[str] = []
+    conteo_do: dict[str, int] = {}
     for _, u in candidatos:
         if len(elegidas) >= max_urls:
             break
+        # regla editorial: un dominio no puede llenar la lista; el gate de fuentes
+        # exige independencia, así que la descubierta mezcla dominios a propósito
+        host = urlparse(u).netloc
+        if conteo_do.get(host, 0) >= 2:
+            continue
         if _viable(u):
             elegidas.append(u)
+            conteo_do[host] = conteo_do.get(host, 0) + 1
     if len(elegidas) < 4:
         raise SystemExit(f"descubrir: sólo {len(elegidas)} fuentes alcanzables para '{historia}'. "
                          "El pipeline no publica con investigación insuficiente (gate 1).")
