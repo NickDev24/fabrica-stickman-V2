@@ -49,14 +49,8 @@ def checklist(ep: Episode) -> Path:
     manifest = ep.read_json("derivados-manifest.json")
     gates_out = meta.get("gates", gates.run_all_gates(ep.dir))
     title = ep.read_state()["title"]
-    fuentes = _fuentes_md(sources)
-    creditos = _creditos_md(ep)
-    desc = (
-        f"{title}\n\nPulso Curioso: historias sorprendentes con contexto y fuentes verificables. "
-        f"Narración sintética (IA).\n\nFuentes:\n{fuentes}"
-        + (f"\n\nCréditos de imágenes:\n{creditos}" if creditos else "")
-        + "\n\n#PulsoCurioso #curiosidades #documental"
-    )
+    subtitle = str(meta.get("angle") or "Pulso Curioso").strip()
+    desc = f"{title}\n{subtitle}"
     yt_parts = "\n".join(f"  - {p['archivo']} ({p['duration_s']}s)" for p in manifest.get("yt_partes", []))
     if manifest.get("ruta") in ("keyframe", "avatar_fallback") or "youtube_main" in manifest:
         yt = manifest["youtube_main"]

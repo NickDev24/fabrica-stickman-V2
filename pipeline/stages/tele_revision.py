@@ -75,33 +75,22 @@ def _video_final(ep: Episode) -> Path:
     return max(maestro or mp4, key=lambda p: p.stat().st_mtime)
 
 
-def _pregunta(ep: Episode) -> str:
-    """Texto corto que acompaña al video en revisión."""
-    meta = ep.metadata()
-    return (f"🧪 REVISIÓN DEL CAPÍTULO: {meta.get('title') or ep.slug}\n\n"
-            "Tocá un botón para decidir:\n"
-            "· ✅ APROBAR Y PUBLICAR → publica en YouTube/Facebook y habilita autonomía\n"
-            "· ❌ NO APROBAR → no se publica NADA; el capítulo queda rechazado\n\n"
-            "El texto completo (guion + hashtags) va en el mensaje siguiente.")
-
-
 def enviar_para_aprobacion(ep: Episode) -> None:
-    """Manda el video CON BOTONES ✅/❌; no publica nada todavía."""
-    from .publicacion import _partir_mensaje, texto_de_envio
-
+    """Contrato del dueño: video + TÍTULO + SUBTÍTULO + 2 botones. Nada más."""
     _token_, chat = _creds()
     video = _video_final(ep)
     base = _base()
-    copia = texto_de_envio(ep)
-    caption = (f"🎬 {ep.read_state().get('title') or ep.slug}\n"
-               f"— Pulso Curioso —")[:1024]
+    meta = ep.metadata()
+    titulo = ep.read_state().get("title") or ep.slug
+    subtitulo = str(meta.get("angle") or "").strip() or "Pulso Curioso"
+    caption = f"🎬 {titulo}\n{subtitulo}"[:1024]
     markup = json.dumps({"inline_keyboard": [
-        [{"text": "✅ APROBAR Y PUBLICAR", "callback_data": f"pub:{ep.slug}"}],
-        [{"text": "❌ NO APROBAR", "callback_data": f"nopub:{ep.slug}"}],
+        [{"text": "✅ Aprobar", "callback_data": f"pub:{ep.slug}"},
+         {"text": "❌ Reprobar", "callback_data": f"nopub:{ep.slug}"}],
     ]}, ensure_ascii=False)
     with video.open("rb") as fh:
         r = requests.post(base + "sendVideo",
-                          data={"chat_id": chat, "caption": _pregunta(ep) + "\n\n" + caption,
+                          data={"chat_id": chat, "caption": caption,
                                 "supports_streaming": "true",
                                 "reply_markup": markup},
                           files={"video": (video.name, fh, "video/mp4")}, timeout=300)
@@ -112,12 +101,7 @@ def enviar_para_aprobacion(ep: Episode) -> None:
         {"slug": ep.slug, "video": str(video), "msg_id": msg.get("message_id"),
          "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "estado": "pendiente"},
         ensure_ascii=False) + "\n")
-    for cuerpo in _partir_mensaje(copia):
-        rr = requests.post(base + "sendMessage",
-                           data={"chat_id": chat, "text": cuerpo}, timeout=120)
-        if not rr.ok or not rr.json().get("ok"):
-            raise RuntimeError(f"sendMessage revisión falló: HTTP {rr.status_code} {rr.text[:200]}")
-    print(f"  telegram REVISIÓN: video {video.name} + botones ✅/❌ enviados")
+    print(f"  telegram REVISIÓN: video {video.name} + título + subtítulo + botones ✅/❌")
 
 
 def autonomia_total() -> bool:
