@@ -207,15 +207,30 @@ function epPorSlug(slug) { return S.galeria.find((e) => e.slug === slug); }
 /* ─────────────────────────── feed de inicio ──────────────────────────── */
 function bannerFabrica() {
   const barr = $("#banner-fabrica");
+  const chip = $("#bf-chip");
+  const titulo = $("#bf-titulo");
+  const sub = $("#bf-sub");
+  const epsHoy = $("#bf-eps-hoy");
+  const pubEstado = $("#bf-pub-estado");
   if (S.modo === "corriendo") {
-    barr.className = "banner-fab viva";
+    barr.className = "banner-fab banner-hero viva";
+    chip.textContent = "● PRODUCIENDO";
+    chip.className = "bf-chip vivo";
     const meta = epPorSlug(S.ep);
-    $("#bf-titulo").textContent = `Fábrica en producción${meta ? `: ${meta.titulo}` : ""}`;
-    $("#bf-sub").textContent = `${S.estado?.episodios_hoy || 0} episodios hoy · publicación ${S.publica ? "ON" : "OFF"}`;
+    titulo.textContent = `Fábrica en producción${meta ? `: ${meta.titulo}` : ""}`;
+    sub.textContent = `${S.estado?.episodios_hoy || 0} episodios hoy · ciclo 24/7 activo`;
+    epsHoy.textContent = S.estado?.episodios_hoy ?? 0;
+    pubEstado.textContent = S.publica ? "ON" : "OFF";
+    pubEstado.className = S.publica ? "bf-pub on" : "bf-pub off";
   } else {
-    barr.className = "banner-fab apagada";
-    $("#bf-titulo").textContent = "Fábrica en espera";
-    $("#bf-sub").textContent = "Pulsá ▶ Play en Fábrica de Video para lanzar el ciclo 24/7";
+    barr.className = "banner-fab banner-hero apagada";
+    chip.textContent = "● EN ESPERA";
+    chip.className = "bf-chip";
+    titulo.textContent = "Fábrica en espera";
+    sub.textContent = "Pulsá ▶ Play en Fábrica de Video para lanzar el ciclo 24/7";
+    epsHoy.textContent = S.estado?.episodios_hoy ?? 0;
+    pubEstado.textContent = S.publica ? "ON" : "OFF";
+    pubEstado.className = S.publica ? "bf-pub on" : "bf-pub off";
   }
 }
 
@@ -245,8 +260,17 @@ function pillPub(pub) {
 
 function pintarFeed() {
   bannerFabrica();
+  pintarStatsInicio();
   pintarFeedEps();
   pintarFeedComics();
+}
+
+function pintarStatsInicio() {
+  const pub = S.galeria.reduce((n, e) => n + Object.keys(e.pub || {}).length, 0);
+  $("#stat-episodios").textContent = S.galeria.length;
+  $("#stat-publicaciones").textContent = pub;
+  $("#stat-keyframes").textContent = totalKfs();
+  $("#stat-vinetas").textContent = totalVin();
 }
 
 function pintarFeedEps() {
@@ -254,30 +278,32 @@ function pintarFeedEps() {
   host.innerHTML = "";
   const eps = epPublicados();
   if (!eps.length) {
-    host.innerHTML = `<div class="aviso">Todavía no hay episodios publicados — la fábrica está buscando su primer tema verificado.</div>`;
+    host.innerHTML = `<div class="aviso" style="grid-column:1/-1">Todavía no hay episodios publicados — la fábrica está buscando su primer tema verificado.</div>`;
     return;
   }
   eps.forEach((ep, idx) => {
     const video = ((ep.videos || []).find((v) => ETIQ_VIDEO[v.label])) || (ep.videos || [])[0];
     const hero = idx === 0 && video;
     const card = document.createElement("article");
-    card.className = "tarjeta-ep" + (hero ? " ter-card" : "");
+    card.className = "tarjeta-ep" + (hero ? " ep-hero" : "");
     card.dataset.search = `${ep.titulo} ${ep.slug} ${ep.categoria}`.toLowerCase();
+    const media = video ? cardVideoMedia(ep, video, hero) : "";
+    const acciones = pillPub(ep.pub);
+    const qcChip = ep.comics?.qc_aprobado ? `<span class="pill qc">cómic QC OK</span>` : "";
     card.innerHTML = `
-      <div class="te-cuerpo">
-        <h3 class="te-tit">${esc(ep.titulo || ep.slug)}</h3>
-        <div class="te-meta">${esc(ep.categoria || "")} · ${hace(ep.mtime)}
-          ${pillPub(ep.pub)} ${ep.comics?.qc_aprobado ? `<span class="pill com">cómic disponible</span>` : ""}</div>
+      ${media}
+      <div class="te-cuerpo" style="padding:16px 18px 18px; gap:10px;">
+        <div class="te-tit-row" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <h3 class="te-tit" style="margin:0; ${hero?'font-size:18px;':'font-size:15.5px;'}">${esc(ep.titulo || ep.slug)}</h3>
+          ${ep.comics?.qc_aprobado ? `<span class="pill qc" style="font-size:9px;">cómic QC OK</span>` : ""}
+        </div>
+        <div class="te-meta" style="font-size:12px; gap:8px;">
+          <span class="pill ${ep.categoria?'gen':''}" style="font-size:9px;">${esc(ep.categoria || "")}</span>
+          <span style="color:var(--tinta-3);">${hace(ep.mtime)}</span>
+          ${acciones}
+        </div>
       </div>`;
     if (video) {
-      card.insertAdjacentHTML("afterbegin", cardVideoMedia(ep, video));
-      const vid = card.querySelector("video");
-      if (ep.portada) vid.setAttribute("poster", ep.portada);
-      vid.onloadedmetadata = () => {
-        card.querySelector(".te-dur")?.remove();
-        if (vid.duration) vid.insertAdjacentHTML(
-          "afterend", `<span class="te-dur">${fmtDur(vid.duration)}</span>`);
-      };
       card.querySelector(".te-media").onclick = () =>
         lbAbrir([{tipo: "video", url: video.url, pie: `${ep.titulo} — ${video.label}`}], 0);
     }
@@ -291,7 +317,7 @@ function pintarFeedComics() {
   host.innerHTML = "";
   const caps = epConComics();
   if (!caps.length) {
-    host.innerHTML = `<div class="aviso">El taller de cómics no publicó capítulos aún (COMICS_ENABLED=1 para activarlo).</div>`;
+    host.innerHTML = `<div class="aviso" style="grid-column:1/-1">El taller de cómics no publicó capítulos aún (COMICS_ENABLED=1 para activarlo).</div>`;
     return;
   }
   caps.forEach((ep) => {
@@ -302,14 +328,17 @@ function pintarFeedComics() {
       ? `${mini(pgs[0])}<span class="mitad">${pgs.slice(1, 3).map(mini).join("") || ""}</span>`
       : (pgs[0] ? mini(pgs[0]) : "");
     const card = document.createElement("article");
-    card.className = "card-comic";
+    card.className = "card-comic comic-hero";
     card.dataset.search = `${c.titulo_chapter || ep.titulo} ${ep.slug}`.toLowerCase();
     card.innerHTML = `
       <div class="cc-folio">${folio}</div>
-      <div class="cc-cuerpo">
-        <h3 class="cc-tit">${esc(c.titulo_chapter || ep.titulo)}</h3>
-        <div class="cc-meta">${c.vinetas || 0} viñetas · ${c.grillas?.length || 0} páginas
-          ${c.qc_aprobado ? `<span class="pill qc">QC OK</span>` : `<span class="pill com">en revisión</span>`}</div>
+      <div class="cc-cuerpo" style="padding:14px 16px; gap:8px;">
+        <h3 class="cc-tit" style="margin:0; font-size:15px;">${esc(c.titulo_chapter || ep.titulo)}</h3>
+        <div class="cc-meta" style="font-size:11.5px; gap:8px; flex-wrap:wrap;">
+          <span class="pill ${c.qc_aprobado?'qc':'com'}" style="font-size:9px;">${c.vinetas || 0} viñetas</span>
+          <span class="pill gen" style="font-size:9px;">${c.paginas?.length || 0} páginas</span>
+          ${c.qc_aprobado ? `<span class="pill qc" style="font-size:9px;">QC OK</span>` : `<span class="pill com" style="font-size:9px;">en revisión</span>`}
+        </div>
       </div>`;
     host.appendChild(card);
   });
