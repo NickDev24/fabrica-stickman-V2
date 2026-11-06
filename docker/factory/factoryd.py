@@ -32,6 +32,7 @@ STATE = ROOT / "state"
 PROJECTS = ROOT / "projects"
 LOG_FILE = STATE / "logs" / "factoryd.log"
 CTRL = STATE / "factoryd.json"
+CONECTORES_FILE = STATE / "conectores.json"
 
 PUERTO = int(os.environ.get("FACTORYD_PORT", "8610"))
 COOLDOWN_S = int(os.environ.get("FACTORY_COOLDOWN_S", "60"))
@@ -649,76 +650,252 @@ async def api_metricas(req: web.Request) -> web.Response:
     return web.json_response(_leer_metricas())
 
 
-# ------------------------------------------------------------------ conectores MCP
-def _conectores() -> list[dict]:
-    """Lista los conectores MCP existentes (proveedores LLM + Zernio + plataformas)."""
-    concs = []
+# ------------------------------------------------------------------ conectores MCP (REAL)
+_CONECTORES_CACHE: dict | None = None
+
+
+def _conectores_cargar() -> dict:
+    """Carga la configuración de conectores desde state/conectores.json."""
+    global _CONECTORES_CACHE
+    if _CONECTORES_CACHE is not None:
+        return _CONECTORES_CACHE
     try:
-        prov = json.loads((STATE / "proveedores.json").read_text(encoding="utf-8"))
+        datos = json.loads(CONECTORES_FILE.read_text(encoding="utf-8"))
+        if isinstance(datos, dict) and "conectores" in datos:
+            _CONECTORES_CACHE = datos["conectores"]
+            return _CONECTORES_CACHE
     except (OSError, json.JSONDecodeError):
-        prov = {}
-    for nombre, datos in prov.items():
-        estado = str(datos.get("estado", "")).lower()
-        st = "ok" if estado == "ok" else ("err" if estado in ("error", "rate_limit") else "pend")
-        concs.append({
-            "nombre": nombre, "platform": nombre, "tipo": "proveedor LLM",
-            "estado": st, "desc": str(datos.get("detalle") or "")[:90],
-            "meta": ["llm", estado],
+        pass
+    _CONECTORES_CACHE = {}
+    return _CONECTORES_CACHE
+
+
+def _conectores_guardar(conectores: dict) -> None:
+    """Persiste la configuración de conectores en state/conectores.json."""
+    global _CONECTORES_CACHE
+    CONECTORES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONECTORES_FILE.write_text(
+        json.dumps({"conectores": conectores}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    _CONECTORES_CACHE = conectores
+
+
+def _mascarar_token(token: str | None) -> str:
+    """Devuelve el token mascarado para exposiciones seguras (GET)."""
+    if not token:
+        return ""
+    if len(token) <= 8:
+        return "*" * len(token)
+    return token[:4] + "*" * (len(token) - 8) + token[-4:]
+
+
+def _conectores_publicos() -> list[dict]:
+    """Lista conectores con datos de configuración (tokens mascarados) para el front."""
+    conectores = _conectores_cargar()
+    salida = []
+    for platform, c in conectores.items():
+        salida.append({
+            "platform": platform,
+            "nombre": c.get("nombre", platform),
+            "tipo": c.get("tipo", "mcp"),
+            "endpoint": c.get("endpoint", ""),
+            "auth_tipo": c.get("auth_tipo", "none"),
+            "token": _mascarar_token(c.get("token", "")),
+            "scopes": c.get("scopes", []),
+            "headers_extra": c.get("headers_extra", {}),
+            "estado": c.get("estado", "pend"),
+            "ultimo_test": c.get("ultimo_test"),
+            "ultimo_error": c.get("ultimo_error"),
+            "capacidades": c.get("capacidades", []),
+            "origen": c.get("origen", "configurado"),
         })
-    zok = bool(__import__("os").environ.get("ZERNIO_API_KEY", ""))
-    concs.extend([
-        {"nombre": "Zernio", "platform": "zernio", "tipo": "orquestador de publicación",
-         "estado": "ok" if zok else "pend",
-         "desc": "Publica en YouTube y Facebook vía API presign",
-         "meta": ["api", "presign", "posts"]},
-        {"nombre": "YouTube", "platform": "youtube", "tipo": "publicación",
-         "estado": "ok" if zok else "pend",
-         "desc": "Videos, Shorts y comunidad",
-         "meta": ["master", "reel", "short"]},
-        {"nombre": "Facebook", "platform": "facebook", "tipo": "publicación",
-         "estado": "ok" if zok else "pend",
-         "desc": "Reels y posts de página PULSO Curioso",
-         "meta": ["reel", "post"]},
-        {"nombre": "Telegram", "platform": "telegram", "tipo": "aviso",
-         "estado": "ok",
-         "desc": "Lista de reproducción al canal del propietario",
-         "meta": ["bot", "chat"]},
-    ])
-    concs.extend(_conectores_extra.values())
-    return concs
+    return salida
 
 
-_conectores_extra: dict = {}
+async def _mcp_handshake(endpoint: str, auth_tipo: str, token: str,
+                         headers_extra: dict, timeout: float = 10.0) -> tuple[bool, str | None, list[str]]:
+    """Handshake MCP real contra el endpoint configurado.
+
+    Ejecuta JSON-RPC `initialize` y `tools/list` para validar que el servidor
+    MCP responde y devuelve sus capacidades/tools. Devuelve (ok, error, capacidades).
+    """
+    import aiohttp
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if auth_tipo == "bearer" and token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif auth_tipo == "api_key" and token:
+        headers["X-API-Key"] = token
+    elif auth_tipo == "custom" and token:
+        headers["Authorization"] = token
+    headers.update(headers_extra or {})
+
+    payload_init = {
+        "jsonrpc": "2.0", "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "pulso-factory", "version": "1.0.0"},
+        },
+    }
+    payload_tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+            async with session.post(endpoint, headers=headers, json=payload_init) as r:
+                if r.status not in (200, 201):
+                    return False, f"initialize HTTP {r.status}", []
+                datos = await r.json()
+                caps = []
+                if isinstance(datos, dict):
+                    result = datos.get("result") or {}
+                    server_caps = result.get("capabilities") or {}
+                    if isinstance(server_caps, dict):
+                        caps = [k for k, v in server_caps.items() if v]
+            # tools/list (opcional: algunos servidores solo exponen initialize)
+            try:
+                async with session.post(endpoint, headers=headers, json=payload_tools) as r2:
+                    if r2.status in (200, 201):
+                        d2 = await r2.json()
+                        tools = (d2 or {}).get("result", {}).get("tools", [])
+                        if isinstance(tools, list):
+                            caps += [str(t.get("name", "tool")) for t in tools]
+            except Exception:
+                pass
+            return True, None, sorted(set(caps))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return False, str(exc)[:200], []
 
 
 async def api_conectores(req: web.Request) -> web.Response:
-    return web.json_response(_conectores())
-
-
-async def api_conectores_probar(req: web.Request) -> web.Response:
-    try:
-        body = await req.json()
-    except Exception:
-        body = {}
-    platform = str(body.get("platform", ""))
-    if not platform:
-        return web.json_response({"ok": False, "error": "platform requerido"}, status=400)
-    return web.json_response({"ok": True, "platform": platform, "estado": "ok",
-                              "mensaje": f"{platform} respondió correctamente"})
+    return web.json_response(_conectores_publicos())
 
 
 async def api_conectores_agregar(req: web.Request) -> web.Response:
+    """Registra un conector MCP con su configuración real (endpoint, auth, token, scopes)."""
     try:
         body = await req.json()
     except Exception:
         body = {}
-    nombre = str(body.get("nombre", "")).strip()
     platform = str(body.get("platform", "")).strip().lower()
-    if not nombre or not platform:
-        return web.json_response({"ok": False, "error": "nombre y platform requeridos"}, status=400)
-    _conectores_extra[platform] = {"nombre": nombre, "platform": platform, "estado": "pend",
-                                   "desc": "Conector registrado desde el front", "meta": ["futuro"]}
-    return web.json_response({"ok": True, "nombre": nombre, "platform": platform})
+    nombre = str(body.get("nombre", platform)).strip()
+    endpoint = str(body.get("endpoint", "")).strip()
+    auth_tipo = str(body.get("auth_tipo", "none")).strip().lower()
+    token = str(body.get("token", "")).strip()
+    scopes = body.get("scopes") or []
+    headers_extra = body.get("headers_extra") or {}
+
+    if not platform:
+        return web.json_response({"ok": False, "error": "platform requerido"}, status=400)
+    if auth_tipo not in ("none", "bearer", "api_key", "custom"):
+        return web.json_response({"ok": False, "error": "auth_tipo inválido"}, status=400)
+
+    conectores = _conectores_cargar()
+    conectores[platform] = {
+        "nombre": nombre,
+        "tipo": "mcp",
+        "endpoint": endpoint,
+        "auth_tipo": auth_tipo,
+        "token": token,
+        "scopes": list(scopes) if isinstance(scopes, list) else [],
+        "headers_extra": headers_extra if isinstance(headers_extra, dict) else {},
+        "estado": "pend",
+        "ultimo_test": None,
+        "ultimo_error": None,
+        "capacidades": [],
+        "origen": "configurado",
+    }
+    _conectores_guardar(conectores)
+    return web.json_response({"ok": True, "platform": platform, "nombre": nombre})
+
+
+async def api_conectores_actualizar(req: web.Request) -> web.Response:
+    """Actualiza la configuración de un conector MCP existente."""
+    platform = req.match_info.get("platform", "").strip().lower()
+    if not platform:
+        return web.json_response({"ok": False, "error": "platform requerido"}, status=400)
+    conectores = _conectores_cargar()
+    if platform not in conectores:
+        return web.json_response({"ok": False, "error": "conector no encontrado"}, status=404)
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    c = conectores[platform]
+    for campo in ("nombre", "endpoint", "auth_tipo", "token", "scopes", "headers_extra"):
+        if campo in body:
+            val = body[campo]
+            if campo == "auth_tipo" and str(val).lower() not in ("none", "bearer", "api_key", "custom"):
+                return web.json_response({"ok": False, "error": "auth_tipo inválido"}, status=400)
+            if campo == "scopes" and not isinstance(val, list):
+                val = []
+            if campo == "headers_extra" and not isinstance(val, dict):
+                val = {}
+            c[campo] = val
+    c["estado"] = "pend"
+    c["ultimo_test"] = None
+    c["ultimo_error"] = None
+    c["capacidades"] = []
+    _conectores_guardar(conectores)
+    return web.json_response({"ok": True, "platform": platform})
+
+
+async def api_conectores_eliminar(req: web.Request) -> web.Response:
+    """Elimina un conector MCP configurado."""
+    platform = req.match_info.get("platform", "").strip().lower()
+    if not platform:
+        return web.json_response({"ok": False, "error": "platform requerido"}, status=400)
+    conectores = _conectores_cargar()
+    if platform not in conectores:
+        return web.json_response({"ok": False, "error": "conector no encontrado"}, status=404)
+    del conectores[platform]
+    _conectores_guardar(conectores)
+    return web.json_response({"ok": True, "platform": platform})
+
+
+async def api_conectores_probar(req: web.Request) -> web.Response:
+    """Prueba de conexión REAL contra el endpoint MCP configurado (handshake JSON-RPC)."""
+    platform = req.match_info.get("platform", "").strip().lower()
+    if not platform:
+        try:
+            body = await req.json()
+            platform = str(body.get("platform", "")).strip().lower()
+        except Exception:
+            pass
+    if not platform:
+        return web.json_response({"ok": False, "error": "platform requerido"}, status=400)
+    conectores = _conectores_cargar()
+    c = conectores.get(platform)
+    if not c:
+        return web.json_response({"ok": False, "error": "conector no configurado"}, status=404)
+
+    ok, error, caps = await _mcp_handshake(
+        c.get("endpoint", ""),
+        c.get("auth_tipo", "none"),
+        c.get("token", ""),
+        c.get("headers_extra", {}),
+    )
+    c["estado"] = "ok" if ok else "err"
+    c["ultimo_test"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    c["ultimo_error"] = error
+    c["capacidades"] = caps
+    _conectores_guardar(conectores)
+    return web.json_response({
+        "ok": ok,
+        "platform": platform,
+        "estado": c["estado"],
+        "error": error,
+        "capacidades": caps,
+        "mensaje": "Conexión MCP establecida" if ok else (error or "Sin respuesta"),
+    })
+
+
+async def api_conectores_refrescar(req: web.Request) -> web.Response:
+    """Refresca (re-prueba) la conexión de un conector MCP."""
+    return await api_conectores_probar(req)
 
 
 # ------------------------------------------------------------------ agentes del pipeline
@@ -748,7 +925,7 @@ def _agentes() -> list[dict]:
          "habilidades": ["zernio", "youtube", "facebook", "presign"]},
     ]
     for a in ags:
-        a["prompt"] = _AGENTES_PROMPTS.get(a["id"], f"[prompt del sistema de {a.nombre}]")
+        a["prompt"] = _AGENTES_PROMPTS.get(a["id"], f"[prompt del sistema de {a['nombre']}]")
     return ags
 
 
@@ -815,6 +992,10 @@ def armar_app() -> web.Application:
     r.add_get("/api/conectores", api_conectores)
     r.add_post("/api/conectores/probar", api_conectores_probar)
     r.add_post("/api/conectores/agregar", api_conectores_agregar)
+    r.add_put("/api/conectores/{platform}", api_conectores_actualizar)
+    r.add_delete("/api/conectores/{platform}", api_conectores_eliminar)
+    r.add_post("/api/conectores/{platform}/probar", api_conectores_probar)
+    r.add_post("/api/conectores/{platform}/refrescar", api_conectores_refrescar)
     r.add_get("/api/agentes", api_agentes)
     r.add_post("/api/agentes/prompt", api_agentes_prompt)
     r.add_post("/api/agentes/habilidad", api_agentes_habilidad)

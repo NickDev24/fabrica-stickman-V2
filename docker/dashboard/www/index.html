@@ -206,23 +206,57 @@
     <section id="vista-conectores" class="vista" hidden>
       <div class="seccion">
         <div class="hf-cab" style="margin-bottom:14px;">
-          <h2 class="sec-tit">Conectores MCP existentes</h2>
-          <p class="cm-det" style="margin:0;">Cada conector es una puerta de salida de la fábrica (YouTube, Facebook, Zernio, Telegram, etc.). Los conectores listados son los que ya existen; nuevos se agregan sin tocar el código del front.</p>
+          <h2 class="sec-tit">Conectores MCP reales</h2>
+          <p class="cm-det" style="margin:0;">Cada conector MCP tiene su endpoint, autenticación y scopes configurados. La fábrica prueba la conexión real (handshake JSON-RPC) y expone sus capacidades. Tokens privados se almacenan cifrados en el backend y se muestran mascarados.</p>
         </div>
         <div id="conectores-lista" class="conectores-grid"></div>
-        <div class="btn-group" style="margin-top:14px;">
+        <div class="btn-group" style="margin-top:14px; flex-wrap:wrap;">
           <button id="btn-refrescar-conectores" class="btn outline small">🔄 Refrescar estado</button>
           <button id="btn-probar-conectores" class="btn small">✅ Probar todos</button>
         </div>
       </div>
 
       <div class="seccion">
-        <h2 class="sec-tit">Agregar / configurar conector futuro</h2>
-        <p class="cm-det" style="margin:0 0 10px;">Registra un nuevo conector MCP para publicar en otra plataforma. El front lo muestra y el back lo expone por API; la fábrica lo usa sin reescribir la interfaz.</p>
-        <div class="btn-group" style="flex-wrap:wrap;">
-          <label>Nombre: <input id="conc-nombre" type="text" placeholder="ej. TikTok" class="" style="font:12px var(--sans); padding:6px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); min-width:130px;"></label>
-          <label>Platform: <input id="conc-platform" type="text" placeholder="tiktok" style="font:12px var(--sans); padding:6px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); min-width:130px;"></label>
-          <button id="btn-agregar-conector" class="btn primary small">➕ Registrar conector</button>
+        <h2 class="sec-tit">Agregar / editar conector MCP</h2>
+        <p class="cm-det" style="margin:0 0 10px;">Configura un conector MCP real: endpoint URL, tipo de autenticación, token privado y scopes. La fábrica se conecta de forma autónoma y adapta sus capacidades.</p>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; align-items:end; margin-bottom:10px;">
+          <div>
+            <label style="display:block; font:600 10px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:4px;">Platform</label>
+            <input id="conc-platform" type="text" placeholder="ej. zernio" style="font:12px var(--sans); padding:8px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); width:100%;">
+          </div>
+          <div>
+            <label style="display:block; font:600 10px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:4px;">Nombre</label>
+            <input id="conc-nombre" type="text" placeholder="ej. Zernio Publicación" style="font:12px var(--sans); padding:8px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); width:100%;">
+          </div>
+          <div>
+            <label style="display:block; font:600 10px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:4px;">Endpoint URL</label>
+            <input id="conc-endpoint" type="url" placeholder="https://api.ejemplo.com/mcp" style="font:12px var(--sans); padding:8px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); width:100%;">
+          </div>
+          <div>
+            <label style="display:block; font:600 10px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:4px;">Auth</label>
+            <select id="conc-auth" style="font:12px var(--sans); padding:8px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); width:100%;">
+              <option value="none">Ninguna</option>
+              <option value="bearer">Bearer Token</option>
+              <option value="api_key">API Key</option>
+              <option value="custom">Personalizada</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; align-items:end; margin-bottom:10px;">
+          <div>
+            <label style="display:block; font:600 10px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:4px;">Token privado</label>
+            <input id="conc-token" type="password" placeholder="sk_… o token" style="font:12px var(--sans); padding:8px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); width:100%;">
+            <span style="font:500 9.5px var(--sans); color:var(--tinta-3); display:block; margin-top:4px;">Se guarda cifrado; se muestra mascarado.</span>
+          </div>
+          <div>
+            <label style="display:block; font:600 10px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:4px;">Scopes</label>
+            <input id="conc-scopes" type="text" placeholder="ej. posts.write, media.upload" style="font:12px var(--sans); padding:8px 10px; border:1px solid var(--borde); border-radius:8px; background:var(--fondo); color:var(--tinta); width:100%;">
+            <span style="font:500 9.5px var(--sans); color:var(--tinta-3); display:block; margin-top:4px;">Separados por comas.</span>
+          </div>
+        </div>
+        <div class="btn-group" style="margin-top:8px;">
+          <button id="btn-agregar-conector" class="btn primary small">➕ Registrar / actualizar conector</button>
+          <button id="btn-probar-actual" class="btn outline small">🧪 Probar este conector</button>
         </div>
         <div id="conc-msg" style="margin-top:8px; font:500 12px var(--sans); color:var(--tinta-2); min-height:16px;"></div>
       </div>

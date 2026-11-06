@@ -679,57 +679,129 @@ function pintarMetricasView() {
     ${mcard(totalVin(), "viñetas de cómic", `${epConComics().length} capítulos`)}`;
 }
 
-/* ─────────────────────── conectores MCP ──────────────────────────────── */
+/* ─────────────────────── conectores MCP (REAL) ──────────────────────────────── */
 function pintarConectores() {
   const host = $("#conectores-lista");
   host.innerHTML = "";
-  const concs = S.conectores.length ? S.conectores : [
-    { nombre: "YouTube", platform: "youtube", tipo: "publicación", estado: "ok", desc: "Publica videos y Shorts vía Zernio", meta: ["master", "reel", "short"] },
-    { nombre: "Facebook", platform: "facebook", tipo: "publicación", estado: "ok", desc: "Publica reels y posts vía Zernio", meta: ["reel", "post"] },
-    { nombre: "Zernio", platform: "zernio", tipo: "orquestador", estado: "ok", desc: "Puente de publicación multi-plataforma", meta: ["api", "presign"] },
-    { nombre: "Telegram", platform: "telegram", tipo: "aviso", estado: "pend", desc: "Envía lista de reproducción al canal", meta: ["bot", "chat"] },
-  ];
+  const concs = S.conectores.length ? S.conectores : [];
+  if (!concs.length) {
+    host.innerHTML = `<div class="aviso" style="grid-column:1/-1">No hay conectores MCP configurados. Agregá uno desde el formulario de abajo.</div>`;
+    return;
+  }
   concs.forEach((c) => {
+    const ok = c.estado === "ok";
     const card = document.createElement("article");
     card.className = "conector";
-    const stOk = c.estado === "ok";
+    const scopesHtml = (c.scopes || []).map((s) => `<span class="conc-chip">${esc(s)}</span>`).join(" ");
+    const capsHtml = (c.capacidades || []).map((s) => `<span class="conc-chip" style="color:var(--cian);">${esc(s)}</span>`).join(" ");
     card.innerHTML = `
       <div class="conc-cab">
         <div class="conc-nom">${esc(c.nombre)}</div>
         <span class="conc-chip">${esc(c.platform)}</span>
-        <span class="conc-estado ${stOk ? "ok" : c.estado === "err" ? "err" : "pend"}">${stOk ? "● activo" : c.estado === "err" ? "● error" : "○ pendiente"}</span>
+        <span class="conc-estado ${ok ? "ok" : "err"}">${ok ? "● conectado" : "● error"}</span>
       </div>
-      <div class="conc-desc">${esc(c.desc)}</div>
-      <div class="conc-meta">${(c.meta || []).map((t) => `<span class="conc-chip">${esc(t)}</span>`).join(" ")}</div>
-      <div class="conc-acciones">
-        <button class="btn outline small" data-conc="${esc(c.platform)}" onclick="probarConector('${esc(c.platform)}')">▶ Probar</button>
+      ${c.endpoint ? `<div class="conc-desc" style="font-size:11.5px; color:var(--tinta-3); word-break:break-all; margin-top:6px;"><span style="font:600 9px var(--mono); text-transform:uppercase;">endpoint:</span> ${esc(c.endpoint)}</div>` : ""}
+      <div class="conc-meta" style="margin-top:8px;">
+        ${scopesHtml}
+        ${capsHtml ? `<span style="font:600 9px var(--mono); text-transform:uppercase; color:var(--cian); margin-left:8px;">capacidades:</span> ${capsHtml}` : ""}
+      </div>
+      <div style="margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <span style="font:600 9px var(--mono); text-transform:uppercase; color:var(--tinta-3);">auth:</span>
+        <span class="conc-chip" style="font-size:8.5px;">${esc(c.auth_tipo || "none")}</span>
+        ${c.token ? `<span class="conc-chip" style="font-size:8.5px; background:rgba(24,119,242,.1); color:var(--azul-fb); border-color:rgba(24,119,242,.35);">token ····${esc(c.token.slice(-4))}</span>` : `<span class="conc-chip" style="font-size:8.5px; color:var(--tinta-3);">sin token</span>`}
+        ${c.ultimo_test ? `<span class="conc-chip" style="font-size:8.5px; color:var(--tinta-3);">${esc(c.ultimo_test)}</span>` : ""}
+      </div>
+      <div class="conc-acciones" style="margin-top:10px;">
+        <button class="btn outline small" onclick="probarConector('${esc(c.platform)}')">${ok ? "🔄 Re-probar" : "▶ Probar conexión"}</button>
+        <button class="btn outline small" onclick="editarConector('${esc(c.platform)}')">✏ Editar</button>
+        <button class="btn danger small" onclick="eliminarConector('${esc(c.platform)}')">🗑 Eliminar</button>
       </div>`;
     host.appendChild(card);
   });
 }
+
 async function probarConector(platform) {
   try {
-    await POST("/api/conectores/probar", { platform });
-    toast(`Conector ${platform}: respuesta OK`, "good");
+    const res = await POST(`/api/conectores/${encodeURIComponent(platform)}/probar`, {});
+    toast(res.mensaje || `Conector ${platform}: ${res.ok ? "OK" : "error"}`, res.ok ? "good" : "err");
     await refrescarConectores();
     pintarConectores();
   } catch (e) {
     toast(`Conector ${platform} falló`, "err");
   }
 }
+
+async function editarConector(platform) {
+  const c = S.conectores.find((x) => x.platform === platform);
+  if (!c) return;
+  $("#conc-platform").value = c.platform;
+  $("#conc-platform").disabled = true;
+  $("#conc-nombre").value = c.nombre || "";
+  $("#conc-endpoint").value = c.endpoint || "";
+  $("#conc-auth").value = c.auth_tipo || "none";
+  $("#conc-token").value = c.token || "";
+  $("#conc-scopes").value = (c.scopes || []).join(", ");
+  $("#conc-msg").textContent = `Editando conector "${c.platform}". Cambiá los campos y guardá.`;
+  $("#btn-agregar-conector").textContent = "💾 Guardar cambios";
+  $("#btn-agregar-conector").onclick = () => guardarConector(platform);
+  cambiarVista("conectores");
+  window.scrollTo({ top: 0 });
+}
+
+async function eliminarConector(platform) {
+  if (!confirm(`¿Eliminar el conector "${platform}"?`)) return;
+  try {
+    await fetch(`/api/conectores/${encodeURIComponent(platform)}`, { method: "DELETE" });
+    toast(`Conector "${platform}" eliminado`, "good");
+    await refrescarConectores();
+    pintarConectores();
+  } catch (e) { toast("No se pudo eliminar el conector", "err"); }
+}
+
+async function guardarConector(platformOverride = null) {
+  const platform = (platformOverride || $("#conc-platform").value.trim()).toLowerCase();
+  const nombre = $("#conc-nombre").value.trim();
+  const endpoint = $("#conc-endpoint").value.trim();
+  const auth_tipo = $("#conc-auth").value;
+  const token = $("#conc-token").value.trim();
+  const scopesRaw = $("#conc-scopes").value.trim();
+  const scopes = scopesRaw ? scopesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  if (!platform) { toast("Completá la platform", "err"); return; }
+  try {
+    const res = await POST("/api/conectores/agregar", {
+      platform, nombre, endpoint, auth_tipo, token, scopes,
+    });
+    toast(res.ok ? `Conector "${platform}" guardado` : "No se pudo guardar", res.ok ? "good" : "err");
+    if (res.ok) {
+      limpiarFormConector();
+      await refrescarConectores();
+      pintarConectores();
+    }
+  } catch (e) { toast("Error guardando conector", "err"); }
+}
+
+function limpiarFormConector() {
+  $("#conc-platform").value = "";
+  $("#conc-platform").disabled = false;
+  $("#conc-nombre").value = "";
+  $("#conc-endpoint").value = "";
+  $("#conc-auth").value = "none";
+  $("#conc-token").value = "";
+  $("#conc-scopes").value = "";
+  $("#conc-msg").textContent = "";
+  $("#btn-agregar-conector").textContent = "➕ Registrar / actualizar conector";
+  $("#btn-agregar-conector").onclick = guardarConector;
+}
+
 $("#btn-refrescar-conectores").onclick = async () => { await refrescarConectores(); pintarConectores(); toast("Conectores refrescados", "info"); };
 $("#btn-probar-conectores").onclick = async () => {
-  for (const c of S.conectores) { await probarConector(c.platform); await new Promise((r) => setTimeout(r, 400)); }
+  for (const c of S.conectores) { await probarConector(c.platform); await new Promise((r) => setTimeout(r, 500)); }
 };
-$("#btn-agregar-conector").onclick = async () => {
-  const nombre = $("#conc-nombre").value.trim();
+$("#btn-agregar-conector").onclick = guardarConector;
+$("#btn-probar-actual").onclick = async () => {
   const platform = $("#conc-platform").value.trim().toLowerCase();
-  if (!nombre || !platform) { toast("Completá nombre y platform", "err"); return; }
-  try {
-    const res = await POST("/api/conectores/agregar", { nombre, platform });
-    toast(res.ok ? `Conector "${nombre}" registrado` : "No se pudo registrar", res.ok ? "good" : "err");
-    if (res.ok) { $("#conc-nombre").value = ""; $("#conc-platform").value = ""; await refrescarConectores(); pintarConectores(); }
-  } catch (e) { toast("Error registrando conector", "err"); }
+  if (!platform) { toast("Ingresá una platform para probar", "err"); return; }
+  await probarConector(platform);
 };
 
 /* ─────────────────────── agentes / pipeline ──────────────────────────── */
