@@ -284,28 +284,40 @@ function pintarFeedEps() {
   eps.forEach((ep, idx) => {
     const video = ((ep.videos || []).find((v) => ETIQ_VIDEO[v.label])) || (ep.videos || [])[0];
     const hero = idx === 0 && video;
+    const esYT = !!ep.pub?.youtube;
+    const esFB = !!ep.pub?.facebook;
+    const badge = hero ? "DESTACADO" : (esYT && esFB ? "YT+FB" : esYT ? "YouTube" : esFB ? "Facebook" : "NUEVO");
+    const badgeCls = hero ? "destacado" : (esYT && esFB ? "ytfb" : esYT ? "yt" : esFB ? "fb" : "nuevo");
     const card = document.createElement("article");
     card.className = "tarjeta-ep" + (hero ? " ep-hero" : "");
     card.dataset.search = `${ep.titulo} ${ep.slug} ${ep.categoria}`.toLowerCase();
     const media = video ? cardVideoMedia(ep, video, hero) : "";
     const acciones = pillPub(ep.pub);
-    const qcChip = ep.comics?.qc_aprobado ? `<span class="pill qc">cómic QC OK</span>` : "";
+    const qcOk = ep.comics?.qc_aprobado;
     card.innerHTML = `
       ${media}
-      <div class="te-cuerpo" style="padding:16px 18px 18px; gap:10px;">
-        <div class="te-tit-row" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <h3 class="te-tit" style="margin:0; ${hero?'font-size:18px;':'font-size:15.5px;'}">${esc(ep.titulo || ep.slug)}</h3>
-          ${ep.comics?.qc_aprobado ? `<span class="pill qc" style="font-size:9px;">cómic QC OK</span>` : ""}
+      ${video ? `<div class="ep-badge ${badgeCls}">${badge}</div>` : ""}
+      <div class="te-cuerpo" style="padding:18px 20px 20px; gap:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <div class="te-tit-row" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <h3 class="te-tit" style="margin:0; font-size:${hero?'19px':'16px'}; font-weight:800; line-height:1.25;">${esc(ep.titulo || ep.slug)}</h3>
+            ${qcOk ? `<span class="pill qc" style="font-size:9px; font-weight:700;">QC APROBADO</span>` : ""}
+          </div>
         </div>
-        <div class="te-meta" style="font-size:12px; gap:8px;">
-          <span class="pill ${ep.categoria?'gen':''}" style="font-size:9px;">${esc(ep.categoria || "")}</span>
-          <span style="color:var(--tinta-3);">${hace(ep.mtime)}</span>
+        <div class="te-meta" style="font-size:12px; gap:8px; flex-wrap:wrap; align-items:center;">
+          <span class="pill ${ep.categoria?'gen':''}" style="font-size:9px; font-weight:700;">${esc(ep.categoria || "")}</span>
+          <span style="color:var(--tinta-2); font:600 12px var(--sans);">${hace(ep.mtime)}</span>
+          ${video ? `<span style="color:var(--tinta-3); font:600 11px var(--mono);">▶ video disponible</span>` : ""}
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
           ${acciones}
+          ${qcOk ? `<a href="#" class="btn outline small" style="font-size:11px; padding:6px 12px;">📚 Ver cómic</a>` : ""}
         </div>
       </div>`;
     if (video) {
       card.querySelector(".te-media").onclick = () =>
         lbAbrir([{tipo: "video", url: video.url, pie: `${ep.titulo} — ${video.label}`}], 0);
+      card.style.cursor = "pointer";
     }
     host.appendChild(card);
   });
@@ -652,8 +664,6 @@ function pintarMetricasView() {
   const datosFB = m.fb && m.fb.puntos ? m.fb.puntos : [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0]];
   const lblYT = dispo ? `YouTube — vistas: ${m.yt.vistas ?? 0}` : "YouTube — sin métricas aún";
   const lblFB = dispo ? `Facebook — vistas: ${m.fb.vistas ?? 0}` : "Facebook — sin métricas aún";
-  setTimeout(() => { dibujarLinea("graf-met-yt", datosYT, "var(--rojo-yt)", { labelActual: lblYT }); }, 0);
-  setTimeout(() => { dibujarLinea("graf-met-fb", datosFB, "var(--azul-fb)", { labelActual: lblFB }); }, 20);
 
   // emoción / reacciones
   const emo = m.emocion || {};
@@ -667,17 +677,43 @@ function pintarMetricasView() {
     ${mcard(emo.predominante || "—", "emoción predominante", dispo ? "reconocimiento emocional" : "pendiente de datos")}
     ${mcard(emo.comentarios ?? 0, "comentarios", dispo ? "con texto analizado" : "")}
     ${mcard(emo.reacciones ? Object.values(emo.reacciones).reduce((a, b) => a + b, 0) : 0, "reacciones", "me gusta / corazón / sorpresa")}`;
-  setTimeout(() => { dibujarBarras("graf-emocion", emoItems); }, 0);
 
-  // seguidores
-  const seg = m.seguidores_dia || [[0, m.seguidores ?? 200], [6, m.seguidores ?? 200], [13, m.seguidores ?? 200], [20, m.seguidores ?? 200], [27, m.seguidores ?? 200], [33, m.seguidores ?? 200], [40, m.seguidores ?? 200], [46, m.seguidores ?? 200]];
-  setTimeout(() => { dibujarLinea("graf-seguidores", seg, "var(--dorado)", { labelActual: `seguidores: ${m.seguidores ?? "—"}` }); }, 40);
+  // dibujar todos los gráficos de métricas
+  redibujarGraficosMetricas();
+
   $("#metricas-prod").innerHTML = `
     ${mcard(S.galeria.length, "episodios archivados", hace(S.galeria[0]?.mtime))}
     ${mcard(S.galeria.reduce((n, e) => n + (e.videos || []).length, 0), "videos en galería", "master + derivados")}
     ${mcard(totalKfs(), "keyframes", "documental 2.5D")}
     ${mcard(totalVin(), "viñetas de cómic", `${epConComics().length} capítulos`)}`;
 }
+
+/* redibujar gráficos al cambiar de vista y al redimensionar */
+function redibujarGraficosMetricas() {
+  if (S.vista !== "metricas") return;
+  const m = S.metricas || {};
+  const dispo = !!m.disponible;
+  const datosYT = m.yt && m.yt.puntos ? m.yt.puntos : [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0]];
+  const datosFB = m.fb && m.fb.puntos ? m.fb.puntos : [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0]];
+  const lblYT = dispo ? `YouTube — vistas: ${m.yt.vistas ?? 0}` : "YouTube — sin métricas aún";
+  const lblFB = dispo ? `Facebook — vistas: ${m.fb.vistas ?? 0}` : "Facebook — sin métricas aún";
+  dibujarLinea("graf-met-yt", datosYT, "var(--rojo-yt)", { labelActual: lblYT });
+  dibujarLinea("graf-met-fb", datosFB, "var(--azul-fb)", { labelActual: lblFB });
+  const emo = m.emocion || {};
+  const emoItems = [];
+  if (dispo && emo.reacciones) {
+    Object.entries(emo.reacciones).forEach(([k, v]) => emoItems.push({ label: k, value: v, color: "var(--violeta)" }));
+  } else {
+    emoItems.push({ label: "sin datos", value: 0, color: "var(--tinta-3)" });
+  }
+  dibujarBarras("graf-emocion", emoItems);
+  const seg = m.seguidores_dia || [[0, m.seguidores ?? 200], [6, m.seguidores ?? 200], [13, m.seguidores ?? 200], [20, m.seguidores ?? 200], [27, m.seguidores ?? 200], [33, m.seguidores ?? 200], [40, m.seguidores ?? 200], [46, m.seguidores ?? 200]];
+  dibujarLinea("graf-seguidores", seg, "var(--dorado)", { labelActual: `seguidores: ${m.seguidores ?? "—"}` });
+}
+
+window.addEventListener("resize", () => {
+  if (S.vista === "metricas") { redibujarGraficosMetricas(); }
+});
 
 /* ─────────────────────── conectores MCP (REAL) ──────────────────────────────── */
 function pintarConectores() {

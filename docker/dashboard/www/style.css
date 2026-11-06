@@ -561,6 +561,34 @@ h2.sec-tit:first-child { margin-top: 0; }
 @media (max-width: 560px) { .feed-comics-hero { grid-template-columns: 1fr; } }
 .comic-hero { height: 100%; }
 
+/* badges de episodio (impacto visual para frenar el scroll) */
+.ep-badge {
+  position: absolute; top: 12px; right: 12px;
+  font: 700 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em;
+  padding: 4px 10px; border-radius: 8px; border: 1px solid transparent;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25); z-index: 3;
+}
+.ep-badge.yt { background: rgba(239,68,68,.15); color: var(--rojo-yt); border-color: rgba(239,68,68,.4); }
+.ep-badge.fb { background: rgba(24,119,242,.15); color: var(--azul-fb); border-color: rgba(24,119,242,.4); }
+.ep-badge.ytfb { background: linear-gradient(135deg, rgba(239,68,68,.15), rgba(24,119,242,.15)); color: var(--dorado); border-color: rgba(245,158,11,.5); }
+.ep-badge.nuevo { background: rgba(16,185,129,.15); color: var(--verde); border-color: rgba(16,185,129,.4); }
+.ep-badge.destacado { background: linear-gradient(135deg, var(--azul), var(--dorado)); color: #fff; border-color: rgba(255,255,255,.4); }
+
+/* tarjetas de episodio con más impacto visual */
+.tarjeta-ep.ep-hero { border: 1px solid var(--borde-suave); background: var(--tarjeta-2); }
+.tarjeta-ep.ep-hero .te-media { aspect-ratio: 16/9; position: relative; }
+.tarjeta-ep.ep-hero .te-media video,
+.tarjeta-ep.ep-hero .te-media img { filter: brightness(.95); transition: transform .3s, filter .3s; }
+.tarjeta-ep.ep-hero:hover .te-media video,
+.tarjeta-ep.ep-hero:hover .te-media img { transform: scale(1.02); filter: brightness(1.05); }
+.tarjeta-ep.ep-hero .te-tit { font-size: 19px; line-height: 1.25; }
+
+/* comics hero mejorado */
+.card-comic.comic-hero { border: 1px solid var(--borde-suave); background: var(--tarjeta-2); }
+.card-comic.comic-hero .cc-folio img { transition: transform .3s; }
+.card-comic.comic-hero:hover .cc-folio img { transform: scale(1.03); }
+.card-comic.comic-hero .cc-tit { font-size: 15px; line-height: 1.3; }
+
 /* ────────── pantallas angostas ── */
 @media (max-width: 980px) {
   #rail { position: fixed; left: -262px; z-index: 45; background: var(--fondo-2);
