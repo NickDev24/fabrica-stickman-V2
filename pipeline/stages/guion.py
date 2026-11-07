@@ -62,7 +62,7 @@ def hook_pregunta(script: str) -> str | None:
 
     Los primeros 3 segundos narrados deben ser una PREGUNTA en segunda persona que abra
     un vacío de curiosidad: concreta, contraintuitiva, SIN resolverla. Las medias reglas:
-    - 4 a 16 palabras (Tomas narra ~2,5 palabras/segundo: 3 segundos ≈ 8 palabras).
+    - 4 a 16 palabras (Tomas narra 2,36 palabras/segundo medido: 3 segundos ≈ 7 palabras).
     - Debe cerrar con signo de interrogación.
     - Prohibida la platitud genérica "¿Sabías que...?" (no abre vacío: invita a scroll).
     """
@@ -112,6 +112,75 @@ def reparar_hook(script: str, titulo: str, angulo: str) -> str:
     return script.replace(primera, nueva, 1)
 
 
+def asegurar_titulo(ep: Episode, titulo: str, angulo: str) -> str:
+    """GATE 6 antes de gastar render: el título entra al prompt, a la portada y a YouTube.
+
+    Fuera de rango o con fórmula de lista se corrige acá, que cuesta 60 tokens, y no después
+    de tres minutos de TTS y 140 planos. El título aprobado se escribe en el estado del
+    episodio: publicacion.py y captacion.py leen de ahí, así el arreglo no se pierde.
+    """
+    from factory import parametros
+    lo, hi = parametros.rango_titulo()
+    vigente = (titulo or "").strip()
+    for intento in range(3):
+        motivos = gates.gate_titulo(vigente, lo, hi)
+        if not motivos:
+            estado = ep.read_state()
+            if estado.get("title") != vigente:
+                estado["title"] = vigente
+                ep.write_state(estado)
+                print(f"  GATE TÍTULO: reparado → {vigente!r} ({len(vigente)} caracteres)")
+            else:
+                print(f"  GATE TÍTULO: PASS ({len(vigente)} caracteres)")
+            return vigente
+        print(f"  GATE TÍTULO: {motivos[0]} — reescribiendo (intento {intento + 1}/3)…")
+        try:
+            nuevo = llm.chat(
+                [{"role": "user", "content":
+                  "Canal de documentales animados estilo stickman, curiosidades verificadas.\n"
+                  f"Historia: {angulo}\nTítulo actual: {vigente}\n"
+                  f"Motivo de rechazo: {motivos[0]}\n"
+                  f"Reescribí el título con {lo}-{hi} caracteres: sujeto concreto y promesa de "
+                  "revelación SIN resolverla, español rioplatense. Prohibido 'top N', 'N cosas', "
+                  "'N secretos', 'N datos', 'increíble', 'sabías que'. Devolvé sólo el título."}],
+                max_tokens=60, temperature=0.7, tag="titulo-fix", episode=ep.slug).strip()
+        except Exception as exc:  # noqa: BLE001 — sin LLM no hay reescritura posible
+            raise SystemExit(f"GATE TÍTULO BLOQUEA EL EPISODIO: {motivos[0]} "
+                             f"(y no se pudo reescribir: {str(exc)[:70]})")
+        vigente = nuevo.strip('"').splitlines()[0].strip() if nuevo else vigente
+    raise SystemExit(f"GATE TÍTULO BLOQUEA EL EPISODIO: tres reescrituras y ningún título pasó "
+                     f"{lo}-{hi} caracteres sin fórmula de lista "
+                     f"({gates.gate_titulo(vigente, lo, hi)[0]})")
+
+
+def _guion_en_dos_pasos(prompt: str, ep: Episode, lo_palabras: int, hi_palabras: int) -> str:
+    """El guion completo, escrito por mitades.
+
+    Un disparo único no da 1500 palabras: el techo de tokens del proveedor corta el texto
+    y el episodio sale de dos minutos. Cada mitad pide la suya y la segunda continúa sobre
+    la primera, así el gancho queda arriba y la revelación abajo, donde van.
+    """
+    mitad = (lo_palabras + hi_palabras) // 2
+    primero = llm.chat(
+        [{"role": "system", "content": prompt},
+         {"role": "user", "content":
+             f"Escribí SOLO la primera mitad del guion: el gancho, el planteamiento y la "
+             f"exploración con sus bucles (≈{mitad} palabras). Cortá en mitad del viaje, con un "
+             "bucle abierto: todavía no cobres la promesa ni saques la revelación. "
+             "La PRIMERA frase es la pregunta del LATIDO 1; nada antes."}],
+        temperature=0.8, max_tokens=1100, tag="guion-1", episode=ep.slug).strip()
+    segundo = llm.chat(
+        [{"role": "system", "content": prompt},
+         {"role": "assistant", "content": primero},
+         {"role": "user", "content":
+             f"Seguí EXACTAMENTE donde quedaste, sin repetir ni una frase de lo anterior "
+             f"(≈{mitad} palabras): punto de inflexión con la revelación que responde la pregunta "
+             "del gancho, giro práctico y cierre memorable con debate abierto. "
+             "Devolvé sólo la prosa de esta segunda mitad."}],
+        temperature=0.7, max_tokens=1100, tag="guion-2", episode=ep.slug).strip()
+    return f"{primero}\n\n{segundo}".strip()
+
+
 def guion(ep: Episode, angulo: str | None = None) -> None:
     previos = gates.load_publicados(exclude_slug=ep.slug)
     if not angulo:
@@ -122,7 +191,7 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
     sources = ep.read_json("sources.json")
     claims = "\n".join(f"- {c['claim']} (veredicto: {c['verdict']})" for c in sources["claims"])
     estado = ep.read_state()
-    titulo = estado["title"]
+    titulo = asegurar_titulo(ep, estado["title"], angulo)
     categoria = estado.get("categoria", "")
     perfil = nichos.canal_de(categoria)
     es_fic = bool(perfil["ficción"])
@@ -133,49 +202,26 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
     regla_ficcion = ("(3) la historia es FICCIÓN: los personajes y sucesos propios se "
                      "inventan libremente pero respetando las ANCLAS listadas " if es_fic else "")
 
-    # Motor de retención (stickman-video-director): 5 latidos con el GANCHO DORADO en 0-3 s.
-    motor_retencion = (
-        "MOTOR DE 5 LATIDOS (retención de alta completitud, obligatorio): "
-        "LATIDO 1 GANCHO DORADO en los primeros 3 segundos narrados: UNA PREGUNTA de "
-        "segunda persona (vos/tú) que abra un vacío de curiosidad — concreta y "
-        "contraintuitiva, máximo 14 palabras, con signo ?. Prohibido '¿Sabías que...?', "
-        "prohibido arrancar con fecha, prohibido resolver la pregunta ahí. "
-        "LATIDO 2 QUIEBRE DE LA ASUNCIÓN: dentro de las 3 primeras frases post-gancho, "
-        "mostrá que lo que la gente cree sobre esto está equivocado o incompleto. "
-        "LATIDO 3 AL DESCUBRIMIENTO: cada bloque entrega UN dato nuevo como si fuera un "
-        "secreto interno (micro-cliffhanger al cierre de cada bloque). "
-        "LATIDO 4 LA VERDAD FINA: la revelación completa, el giro, sin atajos. "
-        "LATIDO 5 ELEVACIÓN + DEBATE: qué significa para el espectador HOY y una pregunta "
-        "final abierta de debate para los comentarios. "
-    )
-
-    prompt = (
-        f"Guionista PROPIETARIO del canal paraguas '{perfil['canal']}' — categoría: {perfil['nombre']}.\n"
-        f"Promesa editorial: {perfil.get('promesa', 'curiosidades sorprendentes verificadas y explicadas con claridad')}.\n"
-        f"Modo: {modo}\n"
-        f"Identidad narrativa del canal: {perfil['identidad']}. Audiencia: {perfil['público']}.\n"
-        "Español rioplatense. El gancho promete una respuesta concreta, nunca oculta un dato esencial "
-        "ni inventa una escena. Evitá llamadas a suscribirse en todos los videos: CTA breve y pertinente.\n"
-        f"Título: {titulo}\n"
-        f"ÁNGULO NARRATIVO (lente de enfoque, NO licencia para inventar): {angulo}\n"
-        f"Afirmaciones verificadas — ÚNICO material de hecho permitido:\n{claims}\n\n"
-        f"{motor_retencion}"
-        "Reglas estrictas: (1) todo enunciado fáctico debe derivar de las afirmaciones listadas; "
-        "prohibido inventar testimonios, personajes, escenas privadas, cifras o fechas que no estén "
-        "en ellas — si el ángulo sugiere algo que los datos no cubren, reformulá el ángulo hacia lo "
-        "que sí sostienen. (2) si usás una imagen o reconstrucción didáctica, marcala como tal "
-        "('la imaginación reconstruye...', 'los testigos de la época describían...' sólo si una "
-        "afirmación lo respalda) " + regla_ficcion + " (4) formato: 500-700 palabras siguiendo los 5 "
-        "latidos de arriba; la PRIMERA FRASE del texto es la pregunta gancho del LATIDO 1 "
-        "(nada antes de ella: ni contexto, ni fecha, ni saludo). "
-        "Frases cortas, ritmo oral, segunda persona cuando aporte ('mirá el mapa', 'pensá esto'). "
-        "Bloques de 1-3 frases separados por línea en blanco. "
-        "NUNCA uses listas, títulos de sección ni markdown: prosa narrada, lista para texto-a-voz."
-    )
-    script = llm.chat(
-        [{"role": "system", "content": prompt},
-         {"role": "user", "content": "Escribí el guion ahora, sin preámbulos."}],
-        temperature=0.8, tag="guion", episode=ep.slug).strip()
+    # La metodología vive en factory/prompts/guion_master.prompt.md, no en este archivo: así
+    # se corrige el motor narrativo (gancho, bucles, historia > lista) sin tocar Python.
+    from factory import parametros
+    lo_palabras, hi_palabras = parametros.palabras_objetivo()
+    prompt = parametros.prompt_guion(
+        CANAL=perfil["canal"], CATEGORIA=categoria or "general", NOMBRE_CATEGORIA=perfil["nombre"],
+        PROMESA=perfil.get("promesa") or "curiosidades verificadas explicadas con claridad",
+        MODO=modo, IDENTIDAD=perfil["identidad"], PUBLICO=perfil["público"],
+        FORMATO=", ".join(perfil.get("formatos") or []) or "historia con protagonista",
+        CLAIMS=claims, REGLA_FICCION=regla_ficcion, TITULO=titulo, ANGULO=angulo,
+        PALABRAS_MIN=lo_palabras, PALABRAS_MAX=hi_palabras,
+        PPS=f"{parametros.palabras_por_segundo():.2f}")
+    # El cambio aprendido del episodio anterior (una sola variable por corrida): llega acá
+    # porque state/aprendizaje.json lo escribió desde métricas reales de Zernio.
+    directiva = parametros.directiva_aprendida()
+    if directiva:
+        prompt = (f"{prompt}\n\nITERACIÓN APRENDIDA DE LA MÉTRICA PROPIA (aplicala, es el único "
+                  f"cambio de este episodio):\n{directiva}")
+        print(f"  aprendizaje aplicado: {directiva[:90]}…")
+    script = _guion_en_dos_pasos(prompt, ep, lo_palabras, hi_palabras)
 
     gates.gate_anti_duplicado(script, previos)  # GATE 4
 
@@ -197,9 +243,46 @@ def guion(ep: Episode, angulo: str | None = None) -> None:
              {"role": "user", "content":
               "El auditor rechazó estos enunciados no respaldados por las afirmaciones verificadas:\n"
               + "\n".join(f"- {q}" for q in faltantes)
-              + "\nReescribí el guion completo quitando o reformulando sólo eso, sin perder el resto."}],
-            temperature=0.5, tag="guion-fix", episode=ep.slug).strip()
+              + "\nReescribí el guion completo quitando o reformulando sólo eso, sin perder el resto "
+              f"y SIN acortar: el guion tiene que seguir en {lo_palabras}-{hi_palabras} palabras."}],
+            temperature=0.5, max_tokens=2000, tag="guion-fix", episode=ep.slug).strip()
         gates.gate_anti_duplicado(script, previos)
+
+    # GATE EXTENSIÓN + BUCLES: la fábrica entregaba episodios de ~320 palabras con promesa
+    # de 10 minutos. O entra al rango del template con bucles verificables, o no se anima.
+    _min_bucles, _max_bucles = parametros.bucles_config()[1]
+    for intento_ext in range(1, 6):
+        motivos = (gates.gate_extension(script, lo_palabras, hi_palabras)
+                   + gates.gate_bucles(script, (_min_bucles, _max_bucles)))
+        if not motivos:
+            print(f"  GATE EXTENSIÓN/BUCLES: PASS ({len(script.split())} palabras, "
+                  f"{gates.contar_bucles(script)} aperturas de bucle)")
+            break
+        print(f"  extensión/bucles (intento {intento_ext}/5): {motivos[0][:120]}")
+        if intento_ext == 5:
+            raise SystemExit(f"El guion no llegó a {lo_palabras}-{hi_palabras} palabras con bucles "
+                             "verificables en 5 "
+                             "reescrituras: no pasa a narración. Un corto de 2 minutos no cumple "
+                             "la promesa del capítulo.")
+        script = llm.chat(
+            [{"role": "system", "content": prompt},
+             {"role": "assistant", "content": script},
+             {"role": "user", "content":
+              "Diagnóstico del guion: " + motivos[0] + ". Reescribilo COMPLETO corrigiendo sólo eso. "
+              "Si falta extensión, expandí el bloque más flaco con hechos que ya estén en las fuentes; "
+              "sumá por lo menos 120 palabras para no quedar debajo del mínimo. Si sobra extensión, "
+              "recortá lo repetido sin borrar la revelación. "
+              "Los bucles que faltan van en la exploración: uno cada 45-90 segundos, que abre una "
+              "pregunta, retrasa la recompensa, la cierra y encadena la siguiente. Nada de rellenar "
+              "repitiendo lo ya dicho: cada bucle trae un dato nuevo de las afirmaciones verificadas."}],
+            temperature=0.6, max_tokens=1800, tag="guion-ext", episode=ep.slug).strip()
+        gates.gate_anti_duplicado(script, previos)
+
+    # Crecer no puede inventar hechos: el texto expandido vuelve a pasar por el auditor.
+    sobrantes = gates.gate_fidelidad(script, sources["claims"], episode=ep.slug)
+    if sobrantes:
+        raise SystemExit(f"La expansión introdujo enunciados sin respaldo ({sobrantes[0][:80]}); "
+                         "recorré la etapa guion con las fuentes bajo control.")
 
     # --- GANCHO DORADO (0-3 s): anti-patrón + pregunta que retiene, con 2 intentos de
     # reparación (si el LLM está vivo). Sin pregunta, no hay episodio: todo el resto del

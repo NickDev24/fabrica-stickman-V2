@@ -1,0 +1,77 @@
+{
+  "name": "retention_feedback_loop_v2",
+  "estado_real": {
+    "no_existe_el_loop": "Definitivamente: no hay ningún código que lea analítica de YouTube ni de Facebook (grep de youtube.googleapis / graph.facebook / analytics en pipeline/ factory/ tools/ = 0 hits). pipeline/stories.py tiene estimate_retention/estimate_ctr, pero es heurística de escritorio ('if misterio in hook: +0.2') y el archivo NUNCA se importa.",
+    "aprendizaje": "pipeline/nichos.py:498 pesos() lee state/aprendizaje.json, que NO existe, y el único que lo escribiría (pipeline.experimentos, citado en nichos.py:7) tampoco existe. Los pesos de categoría valen 1.0 desde siempre.",
+    "registry": "state/revisiones.jsonl tiene todas las entradas en 'pendiente': ninguna aprobación/rechazo humano se procesó nunca. registry/published.jsonl sólo guarda slug/estado/ts/script.",
+    "consecuencia": "cada episodio sale con la misma fórmula de título y gancho sin que nada jamás aprenda. Este es el gap estructural más grande de la fábrica: sin ingesta de métricas, 'iterar' es decoración."
+  },
+
+  "ingesta_minima_viable": {
+    "fuente": "YouTube Data API (reports de stats por video, con OAuth del canal propio) + Graph API page_video_insights para Facebook. Alternativa sin API: exportar el CSV de Studio y parsearlo.",
+    "nuevo_archivo_propuesto": "pipeline/metricas.py con dos funciones: traer_metricas(video_id) y volcar_a_state()",
+    "destino": "state/metricas.jsonl, un registro por video por día de corte",
+    "campos": ["video_id", "plataforma", "fecha", "vistas", "impresiones", "ctr_impresiones", "duracion_media_s", "retencion_30s", "retencion_media", "retencion_curva_puntos", "comentarios", "compartidos"]
+  },
+
+  "senales": {
+    "youtube": ["impresiones_y_CTR", "retencion_0_30s", "retencion_30_60s", "duracion_media_vs_duracion_video", "puntos_de_caida_de_la_curva", "comentarios_por_vista"],
+    "facebook": ["reproducciones_3s", "reproducciones_10s", "reproducciones_completas", "tiempo_medio", "compartidos", "guardados"]
+  },
+
+  "reglas_de_decision": {
+    "principio": "umbrales RELATIVOS a la mediana del propio canal. Sin histórico propio no hay umbral absoluto honesto: cualquier número fijo sería inventado.",
+    "mediana_base": "mediana de los últimos 10 episodios publicados por plataforma",
+    "R1_gancho": {
+      "si": "retencion_30s < 0.90 x mediana del canal",
+      "entonces": "cambiar SOLO el hook y el flash-forward del beat 0; no reescribir el guion completo",
+      "variable_a_tocar": "golden_hook.words_objetivo / pregunta del LATIDO 1"
+    },
+    "R2_intro": {
+      "si": "la caída entre 30s y 60s es la más pronunciada de la curva",
+      "entonces": "adelantar el LATIDO 2 (quiebre de asunción) y reducir el bloque planteamiento en 20 palabras",
+      "variable_a_tocar": "planteamiento.words_target"
+    },
+    "R3_valle_medio": {
+      "si": "caída sostenida entre 1:00 y 3:00",
+      "entonces": "los bucles no cierran: aumentar micro-hooks (intervalo de 90s a 60s) y verificar que cada bucle entrega un dato NUEVO",
+      "variable_a_tocar": "curiosity_loop.interval_seconds"
+    },
+    "R4_revelacion_tarde": {
+      "si": "la mayor cantidad de gente se va justo antes del bloque inflexión",
+      "entonces": "la promesa se está cobrando demasiado tarde: mover un adelanto de la revelación al final de la exploración (cierre parcial + bucle nuevo)",
+      "variable_a_tocar": "exploracion/inflexion time boundaries"
+    },
+    "R5_ctr_bajo": {
+      "si": "CTR de impresiones < 0.85 x mediana",
+      "entonces": "el problema es el PAR título+miniatura, no el video: probar otro overlay y otra fórmula de título en el mismo material",
+      "variable_a_tocar": "packaging/title_rules.formula_N"
+    },
+    "R6_final_corto": {
+      "si": "duracion_media < 0.4 x duracion_del_video",
+      "entonces": "revisar ritmo: aumentar cortes por minuto en el tramo caliente y acortar giro práctico",
+      "variable_a_tocar": "editing.rhythm"
+    },
+    "umbrales_absolutos_de_sanity": "SUPUESTO: dejarlos vacantes hasta tener 10 episodios propios. No copiar los porcentajes de videos de terceros."
+  },
+
+  "reglas_de_iteracion": [
+    "UN cambio por video: si se tocan dos variables, el resultado no enseña nada",
+    "documentar el cambio ANTES de publicar, no después",
+    "comparar contra el mejor episodio propio del mismo nicho, no contra canales ajenos",
+    "cada 10 episodios, revisar si alguna fórmula de título o de gancho superó a la mediana y fijarla como default",
+    "los pesos de nichos.py se ajustan desde state/metricas.jsonl; sin ese archivo, pesos() debe seguir devolviendo 1.0 y no simular aprendizaje"
+  ],
+
+  "registro_de_iteracion": {
+    "archivo": "state/iteraciones.jsonl",
+    "campos_requeridos": ["fecha", "video_id", "cambio_testeado", "variable", "valor_anterior", "valor_nuevo", "hipotesis", "medida_a_los_7d", "medida_a_los_28d", "decision"]
+  },
+
+  "wiring": {
+    "estado_actual": "cero lectores en Python; factory/metrics/feedback_log.jsonl declarado en v1 nunca se creó.",
+    "punto_de_carga_1": "crear pipeline/metricas.py y llamarlo desde pipeline/run.py como comando 'medir'",
+    "punto_de_carga_2": "pipeline/nichos.py:412 APRENDIZAJE -> escribir state/aprendizaje.json desde métricas reales (los pesos dejan de ser decorativos)",
+    "criterio_de_aceptacion": "después de 10 episodios, state/metricas.jsonl tiene 10 filas con retencion_30s numérico y al menos una regla R1-R6 disparó con decisión documentada"
+  }
+}

@@ -24,7 +24,42 @@ def _run(cmd: list[str]) -> None:
 def _duration(path: Path) -> float:
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=nw=1:nk=1", str(path)], capture_output=True, text=True)
-    return float(r.stdout.strip())
+    out = r.stdout.strip()
+    if not out:
+        raise RuntimeError(f"ffprobe no devolvió duración para {path}: "
+                           f"stdout='' stderr={r.stderr[:160]}")
+    return float(out)
+
+
+def _procura_render_cliente(ep: Episode) -> Path:
+    """El render principal aplica a los derivados. Si el archivo principal o el
+    keyframe están corruptos (moov atom / duración vacía), se toma la primera ruta
+    válida registrada en renders/ y se deja un aviso en el manifest, para que la
+    fabrica siga adelante y el dueño regenere el video master con el mismo audio.
+    Origen: red-proxy-casa-blanca 2026-11-05 (pipeline de autocorrección).
+    """
+    candidatos = [
+        ep.dir / "renders" / f"{ep.slug}-main.mp4",
+        ep.dir / "renders" / f"{ep.slug}-keyframe.mp4",
+        ep.dir / "renders" / f"{ep.slug}-kf-silent.mp4",
+        ep.dir / "renders" / f"{ep.slug}-avatar.mp4",
+    ]
+    for c in candidatos:
+        if c.exists():
+            r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                "-of", "default=nw=1:nk=1", str(c)],
+                               capture_output=True, text=True)
+            if r.stdout.strip():
+                return c
+    # Ninguna ruta registrada tenía duración valida: escaneo sobre la carpeta
+    renders = sorted(ep.dir.glob("renders/*.mp4"))
+    for c in renders:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=nw=1:nk=1", str(c)],
+                           capture_output=True, text=True)
+        if r.stdout.strip():
+            return c
+    raise SystemExit(f"No hay renders válidos (con duración) para {ep.slug}.")
 
 
 def partes_youtube(ep: Episode, main: Path, timeline: dict) -> list[Path]:
@@ -88,7 +123,17 @@ def articulo_instagram(ep: Episode) -> Path:
 
 
 def _derivar_keyframe(ep: Episode, main: Path, ruta: str = "keyframe") -> None:
-    """Paquete de revisión YouTube/Facebook para un render audiovisual completo."""
+    """Paquete de revisión YouTube/Facebook para un render audiovisual completo.
+
+    Si el render pasado como ``main`` está vacío/corrupto (moov atom, duración
+    vacía), el cliente se repara eligiendo la primera ruta válida registrada en
+    ``renders/`` (main -> keyframe -> kf-silent -> avatar) y el pipeline sigue.
+    """
+    render = _procura_render_cliente(ep)
+    if render != main:
+        print(f"  REPARACIÓN DERIVADOS: render {main.name} inválido -> "
+              f"usando {render.name}")
+        main = render
     t0 = time.time()
     cpu0 = resource.getrusage(resource.RUSAGE_SELF).ru_utime + resource.getrusage(resource.RUSAGE_SELF).ru_stime
     child0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_utime + resource.getrusage(resource.RUSAGE_CHILDREN).ru_stime

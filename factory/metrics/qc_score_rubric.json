@@ -1,0 +1,26 @@
+{
+  "name": "qc_score_rubric_v1",
+  "motivo": "docs/CONFIGURACIONES-QUIRURGICAS-FABRICA.md CFG-12 definía un gate de 82/100 con pesos que sumaban 110 (+20 +15 +10 +15 +20 +10 +10). Un puntaje sobre una base que no es 100 no es un gate: es ruido. Esta rúbrica cierra en 100 exactos.",
+  "umbral_de_aprobacion": 82,
+  "regla": "un crítico fallado no se compensa con puntos: va directo a reescritura, sin importar el puntaje",
+  "pesos": [
+    {"id": "gancho", "nombre": "Gancho dorado (pregunta 6-12 palabras en 0-3 s, abre vacío y no lo resuelve)", "puntos": 20, "critico": true, "medicion": "automática: guion.hook_pregunta + hook_violado"},
+    {"id": "historia_no_lista", "nombre": "Historia con protagonista (arco completo, cero enumeración)", "puntos": 15, "critico": true, "medicion": "semántica: resumen de 1 línea debe ser 'la historia de X'"},
+    {"id": "bucles", "nombre": "Bucles de curiosidad (6-8, cada 45-90 s, cierra y encadena)", "puntos": 15, "critico": true, "medicion": "automática: gate_bucles sobre la plantilla verbal"},
+    {"id": "revelacion", "nombre": "La revelación responde LA pregunta del hook y está en el bloque correcto", "puntos": 10, "critico": true, "medicion": "semántica"},
+    {"id": "ritmo_visual", "nombre": "Sin frames muertos: todo beat con cambio real, 35%+ con POP, cámara no repetida 3 veces", "puntos": 15, "critico": false, "medicion": "automática sobre render (signalstats YDIF + beats.json)"},
+    {"id": "sincronia", "nombre": "Palabra clave sincronizada con gesto/POP y metáfora visual presente", "puntos": 10, "critico": false, "medicion": "automática: timing-tts vs beats"},
+    {"id": "packaging", "nombre": "Par título+miniatura: abre la pregunta, muestra el conflicto, cero superposición de palabras, legible a 320 px", "puntos": 10, "critico": false, "medicion": "automática (length/regex) + revisión humana del 16:9"},
+    {"id": "giro_y_cierre", "nombre": "Giro práctico derivado de la historia + cierre memorable con debate abierto", "puntos": 5, "critico": false, "medicion": "semántica"}
+  ],
+  "suma_verificacion": 100,
+  "destino_del_fallo": {
+    "critico_fallado": "bloqueo: volver a la etapa guion o render, no se publica",
+    "score_entre_60_y_81": "se puede enviar a aprobación humana con los déficit listados en el mensaje de Telegram",
+    "score_menor_60": "reproceso automático de la etapa con menor puntaje"
+  },
+  "wiring": {
+    "estado_actual": "nuevo. Ningún archivo de la fábrica calculaba un puntaje; pipeline/stages/keyframes.py:_qc (línea 635) sólo mira resolución, duración y LUFS.",
+    "punto_de_carga": "nuevo módulo pipeline/qc_score.py que consume script.txt + beats.json + metadata.json + el render, y devuelve el dict de puntajes. Se llama en pipeline/stages/tele_revision.py antes de enviar, y el número va en el mensaje."
+  }
+}

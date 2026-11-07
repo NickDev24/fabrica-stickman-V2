@@ -164,12 +164,25 @@ def universo_serie(ep) -> dict:
 
 
 def publicar_facebook(ep) -> dict:
-    """facebook-content-strategist vía conector Zernio oficial."""
-    from pipeline import zernio
-    contenido = ep.dir / "publicacion" / "facebook.md"
-    if not contenido.exists():
-        raise FileNotFoundError("falta publicacion/facebook.md (paquete de publicación)")
-    return zernio.create_post(contenido.read_text(encoding="utf-8"))
+    """facebook-content-strategist vía conector Zernio oficial.
+
+    Usa el MISMO plan que el pipeline (_plan_publicacion): si el adapter armará su propia
+    lista de archivos, el reel publicado por Telegram y el publicado por acá serían distintos.
+    """
+    import json
+    from pipeline import config, gates, zernio
+    from pipeline.stages import publicacion
+    gates.gate_publicacion(ep.metadata())
+    ruta_desc = ep.dir / "publicacion" / "descripciones.json"
+    desc = json.loads(ruta_desc.read_text(encoding="utf-8")) if ruta_desc.exists() else {}
+    ids = {"facebook": config.zernio_config()["facebook"]}
+    pieza = next((i for i in publicacion._plan_publicacion(ep, ids, desc)
+                  if i["plataforma"] == "facebook"), None)
+    if pieza is None:
+        raise FileNotFoundError("no hay reel de Facebook en el plan (derivados/facebook-reel.mp4)")
+    url = zernio.upload(pieza["archivo"])
+    return zernio.create_post(pieza["descripcion"], [url], pieza["plataformas"],
+                              title=pieza["titulo"], idempotency_key=f"{ep.slug}:facebook")
 
 
 def politica(ep) -> dict:

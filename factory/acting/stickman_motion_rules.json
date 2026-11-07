@@ -1,0 +1,204 @@
+{
+  "name": "stickman_motion_rules_v2",
+  "diagnostico": "En la ruta stickman real NO hay micro-movimiento: el personaje es una imagen fija generada por IA y lo único que se mueve es la cámara (zoompan). La respiración, el parpadeo y el lipsync por palabra existen sólo en factory/acting/{estados.py,director.py,lipsync.py}, que alimentan la ruta avatar 3D DESCARTADA (run.py la sacó del dispatch). Por eso 'idle_forbidden' nunca se sintió en pantalla.",
+  "principles": [
+    "movimiento_narrador",
+    "sincronizacion_palabra_clave",
+    "expresividad_sin_rostro",
+    "metaforas_visuales_simples",
+    "reciclaje_con_consistencia",
+    "la_camara_no_es_el_movimiento_del_personaje"
+  ],
+  "ritmo_real_medido": {
+    "beat_min_s": 3.5,
+    "beat_max_s": 5.5,
+    "fuente_codigo": "factory/acting/beats.py:21-22",
+    "cortes_por_minuto": [
+      11,
+      17
+    ],
+    "beats_por_episodio_600s": [
+      110,
+      140
+    ],
+    "nota_doc_stale": "los docstrings de beats.py:1 y keyframes.py:9-12 prometen 1.4-2.2s / 30-40 imgs por minuto: mentira documental, corregir el docstring, no el código"
+  },
+  "cambio_visual": {
+    "episodio_cambio_cada_s": [
+      3.5,
+      5.5
+    ],
+    "short_cambio_cada_s": [
+      1.6,
+      2.8
+    ],
+    "fuente_codigo_short": "pipeline/stages/short.py REGLAS_CORTE plano_max_s 2.8",
+    "resolucion_v1": "la regla vieja 'cambio cada 2-3s' era inalcanzable en episodio (chocaba con BEAT_MIN_S 3.5). Se divide por formato."
+  },
+  "micro_movement": {
+    "required": true,
+    "respiracion": {
+      "desplazamiento_px": 8,
+      "ciclo_s": 4.0,
+      "aplicar_cuando_duracion_sMayor_a": 1.0,
+      "razon": "0,25 Hz es el ritmo de una respiración tranquila; 8 px sobre 1280 de alto es imperceptible como movimiento y perceptible como vida"
+    },
+    "en_ruta_stickman_hoy": "aplicada: keyframes._plano renderiza el plano con 8 px de holgura por lado (zoompan s=736x1296) y recorta el máster 720x1280 desde una ventana que oscila a 0,25 Hz con fase corrida por índice de beat. El parpadeo sigue pendiente: requiere capas de dibujo, no zoompan.",
+    "implementacion_minima_viable": [
+      "capa de respiración: escala vertical 1.000->1.012 a 0.25 Hz sobre el recorte del personaje, por beat",
+      "balanceo de brazos: offset sinusoidal ±3 px a 0.4 Hz",
+      "parpadeo: 1 cierre cada 3-6 s dentro de planos con el personaje en cuadro",
+      "deriva de cámara en planos 'quietos': zoom 1.00->1.03 máximo por 5 s, prohibido zoom fijo en 1.00"
+    ],
+    "idle_forbidden": true,
+    "camara_piso_zoom": {
+      "valor": 1.05,
+      "razon": "con zoom 1,00 no hay holgura de recorte y la deriva se clampa a 0: el plano 'fijo' vuelve a ser una foto pegada",
+      "donde": "pipeline/stages/keyframes.py:CAMARA"
+    },
+    "qc": {
+      "muestreo_fps": 5,
+      "umbral_ydif": 0.005,
+      "proporcion_max_muerta": 0.9,
+      "medido_2026_11_05": "plano estático codificado = 100% de cuadros bajo el umbral (YDIF max 0,0008, piso de ruido del códec); el mismo plano con la deriva de 8 px = 16%",
+      "donde": "pipeline/stages/keyframes.py:_frames_muertos, reportado como qc.frames_muertos"
+    }
+  },
+  "camara": {
+    "fuente_codigo": "pipeline/stages/keyframes.py:CAMARA",
+    "movs": {
+      "push": {
+        "zoom_desde": 1.05,
+        "zoom_hasta": 1.08,
+        "curva": "lineal en on/{n}: mismo empuje a 3 s que a 6 s"
+      },
+      "push_lento": {
+        "zoom_desde": 1.05,
+        "zoom_hasta": 1.06,
+        "curva": "lineal en on/{n}"
+      },
+      "pull": {
+        "zoom_desde": 1.08,
+        "zoom_hasta": 1.05,
+        "curva": "lineal en on/{n}"
+      },
+      "pan": {
+        "zoom": 1.06,
+        "barrido": "x de 0 a (iw-iw/zoom) a lo largo del plano"
+      },
+      "shake": {
+        "zoom": 1.06,
+        "dx": 18,
+        "dy": 12
+      },
+      "fijo": {
+        "zoom": 1.05,
+        "nota": "nunca es realmente fijo: sobre z=1,05 se aplica la deriva de respiración; con zoom 1,00 el recorte no tiene holgura y el plano queda muerto"
+      }
+    },
+    "regla_de_asignacion": [
+      "gancho (beat 0): shake o push, nunca fijo",
+      "revelación (bloque inflexion): push lento hacia el detalle",
+      "cada bucle de curiosidad nuevo: cambio de mov (evitar 3 beats consecutivos con el mismo mov)",
+      "pregunta final / cierre: pull-back lento para dar aire",
+      "los mov sin x/y propia (push, push_lento, pull, fijo) reciben la deriva de micro_movement: así ningún plano del máster puede estar quieto"
+    ],
+    "piso_zoom": 1.05
+  },
+  "sincronizacion_palabra_clave": {
+    "required": false,
+    "en_ruta_stickman_hoy": "No se quema texto narrado en pantalla; el render queda limpio, sin subtítulos ni POP.",
+    "regla": "cada palabra clave del guion (sustantivo de la metáfora, cifra, nombre de la revelación) debe coincidir con (a) el beat que está en pantalla y (b) un POP de texto de 1-2 palabras",
+    "cobertura_minima": {
+      "beats_con_pop": 0.35,
+      "palabras_clave_sincronizadas": 0.8
+    },
+    "pop": {
+      "palabras_max": 2,
+      "caracteres_max": 14,
+      "duracion_s": [
+        0.6,
+        1.2
+      ],
+      "tamano_ref": "102 px sobre 720x1280 (keyframes.py:402 ya lo define)"
+    }
+  },
+  "metaforas": {
+    "mapeo": {
+      "deuda": {
+        "visual": "mochila o peso sobre los hombros",
+        "action": "camina más lento, se hunde",
+        "sfx": "impacto_grave_sutil"
+      },
+      "inflacion": {
+        "visual": "escalera que se empina",
+        "action": "esfuerzo creciente, se detiene a mitad",
+        "sfx": "respiracion"
+      },
+      "obstaculo": {
+        "visual": "pared o muro",
+        "action": "rodear o trepar",
+        "sfx": "rozamiento"
+      },
+      "info_oculta": {
+        "visual": "cortina o velo",
+        "action": "correrla con la mano",
+        "sfx": "whoosh_sutil"
+      },
+      "colapso": {
+        "visual": "pared que se quiebra / piso que cede",
+        "action": "caída controlada",
+        "sfx": "impacto_seco"
+      },
+      "progreso": {
+        "visual": "camino que se ilumina adelante",
+        "action": "primer paso dudoso, luego firme",
+        "sfx": "ninguno"
+      },
+      "tiempo_que_se_agota": {
+        "visual": "reloj de arena o sombra que avanza",
+        "action": "acelera el paso",
+        "sfx": "tic_moderado"
+      }
+    },
+    "en_ruta_stickman_hoy": "El mapeo real está hardcodeado como una escalera if/elif de props literales en factory/acting/beats.py:139-240 y está contaminado con literales de UN episodio (dibujos de 'Ponzi' de Madoff). Con un guion genérico cae en props genéricos.",
+    "wiring": "beats.py::_direccion debe leer este mapeo y dejar de tener literales de episodio dentro; los literales de Madoff se van a un override por proyecto (projects/*/artifacts/props.json)."
+  },
+  "expresividad_sin_rostro": {
+    "herramientas": [
+      "inclinación del torso",
+      "altura de los hombros",
+      "ángulo de brazos",
+      "distancia con el objeto de la metáfora",
+      "velocidad del paso",
+      "caída/despegue del suelo"
+    ],
+    "gradiente_emocional": {
+      "calma": "pose simétrica, paso lento, espacio arriba libre",
+      "duda": "cabeza inclinada 10-15°, un brazo a medio levantar",
+      "presion": "hombros arriba, torso adelantado, objeto que invade el cuadro",
+      "derrota": "torso colapsado, rodillas flojas, espacio arriba vacío y opresivo",
+      "revelacion": "se detiene en seco, brazo extendido señalando el dato, cámara push"
+    },
+    "forbidden": [
+      "cara humana detallada",
+      "ojos con pupila realista",
+      "morph líquido de limbs"
+    ]
+  },
+  "reglas_de_render": {
+    "canvas_episodio": "pendiente: hoy el master es 720x1280 vertical (config.py VIDEO_W/H) y no existe ruta 16:9 para YouTube long-form",
+    "fps": 30,
+    "kf_fps_fuente": "pipeline/stages/keyframes.py:38",
+    "ausencia_max_del_protagonista_s": 3.5,
+    "fuente_codigo": "pipeline/config.py AUSENCIA_MAX_S"
+  },
+  "wiring": {
+    "estado_actual": "cero lectores en Python (grep 'stickman_motion_rules' en *.py = 0).",
+    "punto_de_carga_1": "factory/acting/beats.py:21-22 -> BEAT_MIN_S/BEAT_MAX_S leídos de ritmo_real_medido",
+    "punto_de_carga_2": "pipeline/stages/keyframes.py:46-53 -> dict CAMARA construido desde 'camara.movs' en vez de literales",
+    "punto_de_carga_3": "pipeline/stages/keyframes.py:392 -> reactivar POP con los límites de 'sincronizacion_palabra_clave.pop' (hoy desactivado)",
+    "punto_de_carga_4": "factory/acting/beats.py:139-240 -> '_direccion' consume 'metaforas.mapeo'",
+    "punto_de_carga_5": "pipeline/stages/keyframes.py:_qc (línea 635) -> sumarle el gate anti-frame-muerto (signalstats YDIF); hoy _qc sólo ve resolución, duración y LUFS"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "publish_strategy_yt_fb_v2",
+  "bug_critico_previo": {
+    "descripcion": "El auto-publish informa éxito sin subir nada. pipeline/stages/publicacion.py:332-352 itera sobre derivados/yt-parte-*.mp4 y tiktok-trailer-90s.mp4 / instagram-trailer-30s.mp4, que la ruta keyframe nunca produce (derivados.py:90-173 sólo escribe facebook-reel.mp4). El loop queda vacío, resultados=[], y la línea 359 evalúa all([]) como True -> publish_status='AUTO_PUBLISHED' con cero uploads. tele_revision.autonomia_total() (líneas 109-129) interpreta eso como 'aprobado' y habilita publicar sin revisión.",
+    "correccion": "publicar_automatico debe: (a) exigir lista de archivos no vacía ANTES de iterar, (b) incluir SIEMPRE el master mp4 y su portada 16:9, (c) marcar AUTO_PUBLISHED sólo si len(resultados)>0 y cada resultado trae id del medio. Fallo de subida => publish_status='FAILED' explícito.",
+    "criterio_de_aceptacion": "no puede existir un episodio con publish_status=AUTO_PUBLISHED sin al menos un id de retorno de Zernio persistido"
+  },
+  "calendario": {
+    "estado_real": "captacion.py:37-43 escribe publicacion/programacion.json con 14:38 (FB), 18:28 (YT Short) y 23:00 (capítulo), pero NADIE lo consume: zernio.py:65 siempre manda publishNow. O se implementa el scheduling o se borra el archivo para no fingir un plan.",
+    "accion": "usar publishAt de YouTube si se adopta Data API; con Zernio, disparar el job local a la hora programada",
+    "cadencia_objetivo": "3 por semana ({{SUPUESTO: capacidad real de render y de cuota de imágenes sin medir todavía}})"
+  },
+  "youtube": {
+    "objetivo": "retención y tiempo de visualización",
+    "formato_episodio": "16:9, 8-10 min, miniatura 1280x720",
+    "formato_short": "9:16, <=60 s",
+    "hook": "pregunta dorada en 0-3 s; el video no tiene intros",
+    "descripcion": {
+      "primera_linea": "la promesa del gancho, sin resolverla",
+      "hashtags": false,
+      "fuente_hashtags": "hoy están hardcodeadas en publicacion.py:140; quitarlas o hacerlas opcionales por nicho"
+    },
+    "capitulos": "marcar los 6 bloques en la descripción con los tiempos del template (ayuda a retención y a SEO interno)",
+    "engagement": "la pregunta de debate del LATIDO 5 va fijada en comentarios, no en la descripción",
+    "estado_real": "se sube el máster (renders/<slug>-keyframe.mp4, o lo que diga manifest.youtube_main) con platformSpecificData.title. La miniatura 1280x720 se produce en derivados/portada-yt.jpg pero Zernio no la admite en el upload: se asocia en YouTube Studio (pendiente humano real, único que queda)."
+  },
+  "facebook": {
+    "objetivo": "reproducciones completas y compartidos; el feed autoplayea sin sonido",
+    "formato": "9:16 reel (<=90 s) para alcance; el horizontal largo se sube como video nativo con primer frame de conflicto",
+    "hook": "los primeros 5-10 s son visuales: el flash-forward tiene que estar en el frame 0",
+    "pie": "línea 1 = pregunta; línea 2 = contexto; sin descripción larga",
+    "texto_en_video": "no quemar subtítulos; entregar el video sin texto narrado sobre la imagen",
+    "compartidos": "el cierre apunta a 'etiquetá a alguien que...' sólo si la historia lo justifica"
+  },
+  "autonomia": {
+    "aprobaciones_humanas_minimas": 5,
+    "razon": "tele_revision.py:112 liberaba la autonomía total tras UNA aprobación. Cinco aprobaciones revisadas son el mínimo para que el humano deje de mirar el episodio completo y pase a mirar sólo el score.",
+    "mientras_tanto": "cada episodio se envía a Telegram con VIDEO + TÍTULO + SUBTÍTULO + score + déficit, y no se publica sin botón ✅",
+    "estado_2026_11_05": "AUTO_PUBLISH=true en .env (decisión explícita del dueño 2026-11-05): la corrida auto publica YouTube y Facebook por Zernio sin esperar el ✅. La barrera ya NO es la ruta de render ni el botón de Telegram: es el QC MEDIDO del máster (publicacion._qc_del_master → status pass) más el gate de título. Sin QC no se publica a ciegas; con QC en FAIL tampoco. El ✅ del dueño sigue existiendo y salta esa barrera cuando el medidor se equivoca (publicar_automatico(aprobado='user')).",
+    "minimo_aprobaciones_humanas_sigue_viviendo_en": "autonomia.aprobaciones_humanas_minimas"
+  },
+  "reglas_unificadas": [
+    "misma historia, dos paquetes: título, duración y miniatura difieren por plataforma",
+    "no se publica ningún video sin el gate del gancho validado",
+    "synthetic_content=true siempre (gate 3, gates.py:118)",
+    "aprobación humana: la autonomía TOTAL llega a las 5 aprobaciones (parametros.minimo_aprobaciones_humanas), no a la primera. Con AUTO_PUBLISH=true la barrera real es el QC medido del máster + el gate de título, y el dueño conserva el ✅ de Telegram como override."
+  ],
+  "contrato_zernio_2026_11_05": {
+    "fuente": "https://docs.zernio.com/posts/create-post, verificado 2026-11-05 (no supuesto)",
+    "titulo_de_youtube": "platformSpecificData.title. El `title` raíz se guarda sólo para display y NO es el título del video.",
+    "keywords": "campo `tags`: <=100 caracteres por tag y <=500 en total, duplicados autolimpiados. `hashtags` es sólo referencia y no se agrega al caption: los # tienen que ir escritos dentro de `content`.",
+    "http_207": "207 es 2xx: un cliente que mira sólo `.ok` lo lee como publicado. Hay que ramificar por código y clasificar por post.status.",
+    "post_status": "draft | pending_approval | scheduled | publishing | published | partial | failed | cancelled. Sólo `published` con platformPostUrl cuenta como capítulo publicado; `scheduled` en un 207 significa error transitorio con retry automático de Zernio (no es fallo, no es éxito).",
+    "idempotency": "Idempotency-Key por pieza (ventana 24 h): el retry devuelve el post original en vez de duplicar. 409 code=idempotency_conflict = el primero sigue procesando (Retry-After). 409 por dedup de contenido = ya está subido, se registra como duplicate, no como fallo.",
+    "miniatura": "no existe campo de thumbnail en el upload: la portada 1280x720 se asocia a mano en YouTube Studio."
+  },
+  "wiring": {
+    "estado_actual": "CABLEADO 2026-11-05. publicacion._plan_publicacion arma el plan (máster YT + reel FB), publicar_automatico sube por Zernio y clasifica por post.status; tele_revision lee el umbral desde este archivo; factory/parametros.py es el único que sabe los números.",
+    "punto_de_carga_1": "HECHO — publicacion.publicar_automatico: sin plan no hay éxito (SIN_MATERIAL_PUBLICABLE), sin QC medido no se publica, y sólo `published` suma como publicado.",
+    "punto_de_carga_2": "HECHO — tele_revision.autonomia_total usa parametros.minimo_aprobaciones_humanas(); ya no alcanza con una aprobación.",
+    "punto_de_carga_3": "PARCIAL — publishNow sigue siendo el modo por defecto. El programacion.json de 14:38/18:28/23:00 lo consume el job local, no la API: Zernio admite scheduledFor, pero la fábrica todavía no lo pide. Si se adopta, create_post ya acepta publish_now=False."
+  },
+  "texto_en_video": "no quemar subtítulos; el dueño pidió renders sin texto narrado sobre la imagen"
+}

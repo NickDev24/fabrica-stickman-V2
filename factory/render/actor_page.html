@@ -6,20 +6,23 @@
   html, body { margin: 0; padding: 0; background: #10151d; overflow: hidden; }
   canvas { display: block; }
 </style>
-<script type="importmap">
-  { "imports": { "three": "/factory/render/vendor/three.module.js" } }
-</script>
+<script src="/factory/render/vendor/babylon/babylon.js"></script>
+<script src="/factory/render/vendor/babylon/babylonjs.loaders.min.js"></script>
 </head>
 <body>
 </body>
-<script type="module">
-import * as THREE from 'three';
-import { GLTFLoader } from '/factory/render/vendor/GLTFLoader.js';
-
-/* Config inyectada por actor.py: __CONFIG__ (JSON con visemas, rig_map y ruta glb) */
+<script>
+/* Motor de actuación sobre BABYLON.JS (decisión del dueño, 2026-11-06: reemplaza Three.js).
+   Contrato con el driver CDP (factory/render/cdp.mjs), intacto:
+     window.actorInit() -> Promise<{modo, registro}>
+     window.actorCargar(timeline)
+     window.actorFrame(t) -> bool
+     window.actorSnapshot() -> base64 PNG
+     window.actorEstado() -> {modo, apertura_boca}
+   Config inyectada por el driver: __CONFIG__ (JSON con visemas, rig_map y ruta glb). */
 const CONFIG = __CONFIG__;
 
-let scene, camera, renderer;
+let engine, scene, camera;
 let glb = null;           // datos del GLB cargado
 let nodos = null;         // nodos nombrados del GLB: rig por transformación, sin skinning
 let caraY = null;         // altura de la cabeza ya normalizada; encuadre relativo a la cara
@@ -27,118 +30,172 @@ let floor = null;
 let fig = null;           // piezas del actor procedural de validación
 let modo = 'init';
 const V = CONFIG.visema;
+const D2R = Math.PI / 180;
+
+const col3 = (h) => new BABYLON.Color3((h >> 16 & 255) / 255, (h >> 8 & 255) / 255, (h & 255) / 255);
 
 function luz() {
-  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x3a3230, 0.55));
-  const key = new THREE.DirectionalLight(0xffefd2, 1.15);
-  key.position.set(1.6, 2.6, 2.8);
-  const rim = new THREE.DirectionalLight(0x88aaff, 0.4);
-  rim.position.set(-2.2, 1.4, -2.6);
-  scene.add(key, rim);
+  /* THREE HemisphereLight(0xbfd4ff, 0x3a3230, 0.55) */
+  const hemi = new BABYLON.HemisphericLight("hemi", new BABYLON.Vector3(0, 1, 0), scene);
+  hemi.diffuse = col3(0xbfd4ff);
+  hemi.groundColor = col3(0x3a3230);
+  hemi.intensity = 0.55;
+  /* direccional con posición: la dirección es (objetivo - posición) apuntando al origen */
+  const key = new BABYLON.DirectionalLight("key",
+    new BABYLON.Vector3(1.6, 2.6, 2.8).negate().normalize(), scene);
+  key.diffuse = col3(0xffefd2);
+  key.intensity = 1.15;
+  const rim = new BABYLON.DirectionalLight("rim",
+    new BABYLON.Vector3(-2.2, 1.4, -2.6).negate().normalize(), scene);
+  rim.diffuse = col3(0x88aaff);
+  rim.intensity = 0.4;
+}
+
+function std(c, rough) {
+  /* MeshStandardMaterial: rough alto = spec bajito; glossy = reflejo visible */
+  const m = new BABYLON.StandardMaterial("std", scene);
+  m.diffuseColor = col3(c);
+  const s = 0.30 * (1 - rough);
+  m.specularColor = new BABYLON.Color3(s, s, s);
+  m.specularPower = rough < 0.3 ? 96 : 40;
+  return m;
+}
+
+function glow(c) {
+  /* MeshBasicMaterial = sin luz: emissive pleno */
+  const m = new BABYLON.StandardMaterial("glow", scene);
+  m.diffuseColor = new BABYLON.Color3(0, 0, 0);
+  m.emissiveColor = col3(c);
+  m.disableLighting = true;
+  return m;
 }
 
 function suelo() {
-  const g = new THREE.Mesh(
-    new THREE.CircleGeometry(9, 48),
-    new THREE.MeshStandardMaterial({ color: 0x1a222e, roughness: 0.9 }));
+  /* CircleGeometry(9, 48) rotada al plano horizontal */
+  const g = BABYLON.MeshBuilder.CreateDisc("suelo", { radius: 9, tessellation: 48 });
   g.rotation.x = -Math.PI / 2;
   g.position.y = -1.45;
+  const m = std(0x1a222e, 0.9);
+  m.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02);
+  g.material = m;
   floor = g;
-  scene.add(g);
 }
 
-function m(geo, color) {
-  return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.55 }));
-}
-
-/* Actor del personaje 4F (Pulso Curioso) montado proceduralmente sobre SU lámina de
-   referencia: paleta neón (#00FF00 / #FF00FF / #00FFFF / #111111 / #1A1A1A), gorra 4F,
-   hoodie con tiras neón y ojos glow de visera. Modo declarado 'mascota4f_procedural':
-   es el personaje renderizado con geometría liviana; el GLB del usuario lo reemplaza
-   por completo vía rig_map cuando llegue a assets/. */
+/* Actor del personaje 4F (Pulso Curioso) montado proceduralmente: paleta neón
+   (#00FF00 / #FF00FF / #00FFFF / #111111 / #1A1A1A), gorra 4F, hoodie con tiras neón y
+   ojos glow de visera. Nada orgánico, nada de cara humana: visera digital.
+   El GLB del usuario lo reemplaza por completo vía rig_map. */
 function figuraProcedural() {
   const VERDE = 0x00ff00, MAGENTA = 0xff00ff, CIAN = 0x00ffff;
-  const glow = (c) => new THREE.MeshBasicMaterial({ color: c });
-  const dark = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.25 });
-  const gloss = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.18, metalness: 0.8 });
+  const dark = (c) => std(c, 0.5);
+  const gloss = (c) => std(c, 0.14);
   const textura4F = () => {
-    const cv = document.createElement('canvas');
-    cv.width = 128; cv.height = 96;
-    const cx = cv.getContext('2d');
+    const tex = new BABYLON.DynamicTexture("logo4f", { width: 128, height: 96 }, scene, false);
+    const cx = tex.getContext();
     cx.clearRect(0, 0, 128, 96);
     cx.font = 'bold 56px monospace';
     cx.fillStyle = '#00ff00';
     cx.textAlign = 'center';
     cx.shadowColor = '#00ff00'; cx.shadowBlur = 14;
     cx.fillText('4F', 64, 68);
-    const t = new THREE.CanvasTexture(cv);
-    t.needsUpdate = true;
-    return t;
+    tex.update();
+    tex.hasAlpha = true;
+    return tex;
   };
-  const g = new THREE.Group();
-  const cuello = new THREE.Group();
-  const cabeza = new THREE.Group();
+  const g = new BABYLON.TransformNode("grupo", scene);
+  const cuello = new BABYLON.TransformNode("cuello", scene);
+  const cabeza = new BABYLON.TransformNode("cabeza", scene);
 
   // casco táctico glossy cerrado (prohibida la cara orgánica; lámina: visera digital)
-  const craneo = new THREE.Mesh(new THREE.SphereGeometry(0.5, 32, 24), gloss(0x0e0e0e));
-  craneo.scale.set(1, 1.14, 0.92);
-  const capucha = new THREE.Mesh(new THREE.SphereGeometry(0.56, 24, 16, 0, Math.PI * 2, Math.PI * 0.52, Math.PI * 0.48), dark(0x1a1a1a));
-  capucha.position.z = -0.08; capucha.scale.set(1, 0.92, 1);
-  const gorroBanda = new THREE.Mesh(new THREE.SphereGeometry(0.505, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.34), dark(0x141414));
+  const craneo = BABYLON.MeshBuilder.CreateSphere("craneo", { diameter: 1.0, segments: 32 }, scene);
+  craneo.material = gloss(0x0e0e0e);
+  craneo.scaling.set(1, 1.14, 0.92);
+  // capucha: banda baja del casco. (THREE usaba theta 0.52π→1.0π; Babylon bautiza la banda
+  // desde el polo superior, se gira 180° para que caiga abajo.)
+  const capucha = BABYLON.MeshBuilder.CreateSphere("capucha",
+    { diameter: 1.12, segments: 16, slice: 0.24, arc: 1 }, scene);
+  capucha.material = dark(0x1a1a1a);
+  capucha.rotation.x = Math.PI;
+  capucha.position.z = -0.08; capucha.scaling.set(1, 0.92, 1);
+  const gorroBanda = BABYLON.MeshBuilder.CreateSphere("gorroBanda",
+    { diameter: 1.01, segments: 12, slice: 0.17, arc: 1 }, scene);
+  gorroBanda.material = dark(0x141414);
   gorroBanda.position.y = 0.1;
-  // visera: panel de vidrio negro al frente
-  const visor = new THREE.Mesh(
-    new THREE.SphereGeometry(0.507, 32, 16, -0.62, 1.24, 1.33, 0.78),
-    new THREE.MeshStandardMaterial({ color: 0x0b0b0b, roughness: 0.12, metalness: 0.75 }));
+  // visera: panel de vidrio negro al frente (cuña frontal del casco)
+  const visor = BABYLON.MeshBuilder.CreateSphere("visor",
+    { diameter: 1.014, segments: 16, slice: 0.124, arc: 0.197 }, scene);
+  visor.material = gloss(0x0b0b0b);
+  visor.rotation.x = -(1.33 + 0.78 / 2 - Math.PI / 2) * 0.5;   // calibéra la banda al frente-bajo
   // logo 4F glow verde en la banda del casco
-  const logo = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.105),
-    new THREE.MeshBasicMaterial({ map: textura4F(), transparent: true }));
+  const logo = BABYLON.MeshBuilder.CreatePlane("logo", { width: 0.14, height: 0.105, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  const mlogo = new BABYLON.StandardMaterial("mlogo", scene);
+  mlogo.emissiveTexture = textura4F();
+  mlogo.opacityTexture = mlogo.emissiveTexture;   // alpha del canvas: texto visible, caja invisible
+  mlogo.opacityTexture.getAlphaFromRGB = true;
+  mlogo.disableLighting = true;
+  logo.material = mlogo;
   logo.position.set(0.0, 0.33, 0.42);
   logo.rotation.x = -0.35;
-  // ojos glow de la visera (párpados asimétricos aplicados por rotación)
-  const ojoL = new THREE.Mesh(new THREE.CircleGeometry(0.105, 20), glow(VERDE));
+  // ojos glow de la visera (párpados asimétricos por rotación)
+  const ojoL = BABYLON.MeshBuilder.CreateDisc("ojoL", { radius: 0.105, tessellation: 20 }, scene);
+  ojoL.material = glow(VERDE);
   ojoL.position.set(-0.175, 0.075, 0.478);
   ojoL.rotation.z = -0.35;
-  const ojoR = new THREE.Mesh(new THREE.CircleGeometry(0.105, 20), glow(VERDE));
+  const ojoR = BABYLON.MeshBuilder.CreateDisc("ojoR", { radius: 0.105, tessellation: 20 }, scene);
+  ojoR.material = glow(VERDE);
   ojoR.position.set(0.175, 0.075, 0.478);
   ojoR.rotation.z = 0.35;
   // fila de SÍMBOLOS bajo los ojos: pulsan con la LOCUCIÓN (lip-sync del casco)
-  // -> nada de labios orgánicos; el brillo sigue la apertura del visema (Rhubarb)
   const symbols = [];
   for (const [i, x] of [[0, -0.085], [1, 0], [2, 0.085]].entries()) {
-    const s = new THREE.Mesh(new THREE.CircleGeometry(0.028, 14), glow(VERDE));
+    const s = BABYLON.MeshBuilder.CreateDisc("sym" + i, { radius: 0.028, tessellation: 14 }, scene);
+    s.material = glow(VERDE);
     s.position.set(x, -0.135 + (i === 1 ? 0.022 : 0), 0.49);
     symbols.push(s);
-    cabeza.add(s);
+    s.parent = cabeza;
   }
-  cabeza.add(craneo, capucha, gorroBanda, visor, logo, ojoL, ojoR);
+  for (const pieza of [craneo, capucha, gorroBanda, visor, logo, ojoL, ojoR]) pieza.parent = cabeza;
 
-  // torso/h/video: hoodie negro con tiras neón magenta+cian (lámina, sin morphing)
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 0.5, 8, 20), dark(0x151515));
+  // torso/hoodie: negro con tiras neón magenta+cian (sin morphing, sin labios orgánicos)
+  const torso = BABYLON.MeshBuilder.CreateCapsule("torso",
+    { radius: 0.38, height: 1.26, tessellation: 20, subdivisions: 8 }, scene);
+  torso.material = dark(0x151515);
   torso.position.y = -0.95;
-  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.05, 8, 24), dark(0x1a1a1a));
+  const collar = BABYLON.MeshBuilder.CreateTorus("collar",
+    { diameter: 2 * 0.33, thickness: 0.1, tessellation: 24 }, scene);
+  collar.material = dark(0x1a1a1a);
   collar.rotation.x = Math.PI / 2; collar.position.y = -0.42;
-  const tiraM = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6), glow(MAGENTA));
+  const tiraM = BABYLON.MeshBuilder.CreateCylinder("tiraM",
+    { height: 0.5, diameter: 0.024, tessellation: 6 }, scene);
+  tiraM.material = glow(MAGENTA);
   tiraM.rotation.z = 0.12; tiraM.position.set(-0.08, -0.62, 0.37);
-  const tiraC = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6), glow(CIAN));
+  const tiraC = BABYLON.MeshBuilder.CreateCylinder("tiraC",
+    { height: 0.5, diameter: 0.024, tessellation: 6 }, scene);
+  tiraC.material = glow(CIAN);
   tiraC.rotation.z = -0.12; tiraC.position.set(0.08, -0.62, 0.37);
-  const brazoL = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.4, 6, 12), dark(0x151515));
+  const brazoL = BABYLON.MeshBuilder.CreateCapsule("brazoL",
+    { radius: 0.09, height: 0.58, tessellation: 12, subdivisions: 6 }, scene);
+  brazoL.material = dark(0x151515);
   brazoL.position.set(-0.45, -0.78, 0);
-  const brazoR = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.4, 6, 12), dark(0x151515));
+  const brazoR = BABYLON.MeshBuilder.CreateCapsule("brazoR",
+    { radius: 0.09, height: 0.58, tessellation: 12, subdivisions: 6 }, scene);
+  brazoR.material = dark(0x151515);
   brazoR.position.set(0.45, -0.78, 0);
-  const punoL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), glow(CIAN));
+  const punoL = BABYLON.MeshBuilder.CreateSphere("punoL", { diameter: 0.14, segments: 10 }, scene);
+  punoL.material = glow(CIAN);
   punoL.position.set(-0.45, -1.02, 0);
-  const punoR = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), glow(MAGENTA));
+  punoL.parent = g;
+  const punoR = BABYLON.MeshBuilder.CreateSphere("punoR", { diameter: 0.14, segments: 10 }, scene);
+  punoR.material = glow(MAGENTA);
   punoR.position.set(0.45, -1.02, 0);
+  punoR.parent = g;
 
-  g.add(cuello, torso, collar, tiraM, tiraC, brazoL, brazoR, punoL, punoR);
-  cuello.position.y = 0.05;
-  cuello.add(cabeza);
-  cabeza.position.y = 0.62;
+  for (const pieza of [torso, collar, tiraM, tiraC, brazoL, brazoR]) pieza.parent = g;
+  cuello.parent = g; cuello.position.y = 0.05;
+  cabeza.parent = cuello; cabeza.position.y = 0.62;
   g.position.y = -0.55;
-  scene.add(g);
-  fig = { g, cuello, cabeza, ojoL, ojoR, symbols, brazoL, brazoR,
-          verde: new THREE.Color(VERDE) };
+  fig = { g, cuello, ojoL, ojoR, symbols, brazoL, brazoR,
+          verde: col3(VERDE) };
   modo = 'mascota4f_procedural';
 }
 
@@ -147,20 +204,20 @@ function figuraProcedural() {
    proporciones fijas (solo transformaciones de la propia figura). */
 function aplicarAProcedural(rig, apertura, ojoFactor, t) {
   const { g, cuello, ojoL, ojoR, symbols, brazoL, brazoR, verde } = fig;
-  g.rotation.z = THREE.MathUtils.degToRad(rig.postura_roll || 0) * 0.6;
+  g.rotation.z = (rig.postura_roll || 0) * D2R * 0.6;
   g.position.x = (rig.peso || 0) * 0.06;
   // inclinar torso para adelante cuando explica datos (manos activas)
   g.rotation.x = 0.07 * (rig.manos_levantadas || 0);
-  cuello.rotation.x = THREE.MathUtils.degToRad(rig.cabeza_pitch || 0);
-  cuello.rotation.y = THREE.MathUtils.degToRad(rig.cabeza_yaw || 0);
-  cuello.rotation.z = THREE.MathUtils.degToRad(rig.cabeza_roll || 0);
+  cuello.rotation.x = (rig.cabeza_pitch || 0) * D2R;
+  cuello.rotation.y = (rig.cabeza_yaw || 0) * D2R;
+  cuello.rotation.z = (rig.cabeza_roll || 0) * D2R;
   const dx = rig.mirada_dx || 0, dy = rig.mirada_dy || 0;
   ojoL.position.x = -0.175 + dx * 0.03;
   ojoR.position.x = 0.175 + dx * 0.03;
   const ci = rig.ceja_izq || 0, cd = rig.ceja_der || 0;
   // párpados asimétricos por emoción (lámina 4F) + apertura/parpadeo
   const ab = Math.max(0.06, Math.min(1.35, (rig.ojo_apertura || 1) * ojoFactor));
-  ojoL.scale.y = ab; ojoR.scale.y = ab;
+  ojoL.scaling.y = ab; ojoR.scaling.y = ab;
   ojoL.rotation.z = -0.35 + ci * 0.55;
   ojoR.rotation.z = 0.35 - cd * 0.55;
   ojoL.position.y = 0.075 + dy * 0.025 + ci * 0.02;
@@ -171,9 +228,9 @@ function aplicarAProcedural(rig, apertura, ojoFactor, t) {
   for (let i = 0; i < symbols.length; i++) {
     const s = symbols[i];
     const fase = 0.85 + 0.15 * Math.sin(t * 6.28 + i * 1.1);
-    s.material.color.copy(verde).multiplyScalar(Math.min(2, brillo * fase));
-    s.scale.y = 0.45 + apertura * 0.9;
-    s.scale.x = 1 - apertura * 0.12;
+    s.material.emissiveColor.copyFrom(verde).scaleInPlace(Math.min(2, brillo * fase));
+    s.scaling.y = 0.45 + apertura * 0.9;
+    s.scaling.x = 1 - apertura * 0.12;
   }
   const vel = rig.velocidad_gesto || 1;
   const sw = Math.sin(t * 2.1 * vel) * 0.1;
@@ -183,7 +240,7 @@ function aplicarAProcedural(rig, apertura, ojoFactor, t) {
   brazoR.rotation.z = -0.12 - (rig.codo_der || 0) * 0.5;
   brazoL.position.y = -0.78 + (rig.manos_levantadas || 0) * 0.25;
   brazoR.position.y = -0.78 + (rig.manos_levantadas || 0) * 0.25;
-  g.scale.y = 1 + Math.sin(t * ((rig.respiracion || 14) / 60) * 2 * Math.PI) * 0.008;
+  g.scaling.y = 1 + Math.sin(t * ((rig.respiracion || 14) / 60) * 2 * Math.PI) * 0.008;
 }
 
 /* Aplica rig al GLB vía rig_map: {morfos:{param:[nombres...]}, huesos:{param:[nombre,eje,signo...]}} */
@@ -198,9 +255,9 @@ function aplicarNodo(def, v) {
   if (!reg) return false;
   const [, op, eje, factor, modoEsc] = def;
   const f = factor === undefined ? 1 : factor;
-  if (op === 'rot') reg.obj.rotation[eje] = THREE.MathUtils.degToRad(v * f);
+  if (op === 'rot') reg.obj.rotation[eje] = (v * f) * D2R;
   else if (op === 'pos') reg.obj.position[eje] = reg.basePos[eje] + v * f;
-  else if (op === 'esc') reg.obj.scale[eje] = modoEsc === 'fija'
+  else if (op === 'esc') reg.obj.scaling[eje] = modoEsc === 'fija'
     ? Math.max(0.03, Math.min(1.6, v)) : Math.max(0.02, reg.baseScale[eje] + v * f);
   return true;
 }
@@ -213,16 +270,16 @@ function aplicarAGlb(rig, apertura, ojoFactor, t) {
     if (v === undefined) continue;
     if (param === 'ojo_apertura') v = Math.max(0.05, Math.min(1.35, v * ojoFactor));
     for (const c of claves) {
-      for (const { obj, idx } of glb.morfos.get(c) || []) {
-        obj.morphTargetInfluences[idx] = Math.max(0, Math.min(1, v));
+      for (const tgt of glb.morfos.get(c) || []) {
+        tgt.influence = Math.max(0, Math.min(1, v));
       }
     }
   }
   /* visema sobre morfos de boca si el GLB define 'mouthOpen' u similares */
   const bocaKeys = CONFIG.rig_map.visema_morphs || ['mouthOpen'];
   for (const c of bocaKeys) {
-    for (const { obj, idx } of glb.morfos.get(c) || []) {
-      obj.morphTargetInfluences[idx] = Math.max(0, Math.min(1, apertura));
+    for (const tgt of glb.morfos.get(c) || []) {
+      tgt.influence = Math.max(0, Math.min(1, apertura));
     }
   }
   const huesos = CONFIG.rig_map.huesos || {};
@@ -232,7 +289,7 @@ function aplicarAGlb(rig, apertura, ojoFactor, t) {
     for (const d of defs) {
       const [nombre, eje, signo] = d;
       const b = glb.huesos.get(String(nombre).toLowerCase());
-      if (b) b.rotation[eje] = THREE.MathUtils.degToRad(v) * (signo === undefined ? 1 : signo);
+      if (b) b.rotation[eje] = ((v * (signo === undefined ? 1 : signo))) * D2R;
     }
   }
   /* --- rig por nodos (personajes sin skinning) --- */
@@ -247,7 +304,7 @@ function aplicarAGlb(rig, apertura, ojoFactor, t) {
   const rb = CONFIG.rig_map.respiracion_nodo && nodoDe(CONFIG.rig_map.respiracion_nodo);
   if (rb) {
     const rpm = rig.respiracion || 14;
-    rb.obj.scale.y = rb.baseScale.y * (1 + Math.sin(t * (rpm / 60) * 2 * Math.PI) * 0.014);
+    rb.obj.scaling.y = rb.baseScale.y * (1 + Math.sin(t * (rpm / 60) * 2 * Math.PI) * 0.014);
   }
 }
 
@@ -276,7 +333,7 @@ function camaraEn(t, plan) {
   if (plano.mov === 'leve_travelling') dx = 0.18 * Math.sin((t - plano.t0) * 0.5);
   if (plano.mov === 'titubeo') { dx = 0.04 * Math.sin(t * 5.3); dz = 0.03 * Math.sin(t * 4.1); }
   camera.position.set(dx, alt + 0.08 * Math.sin(t * 0.5), d + dz);
-  camera.lookAt(0, lookY, 0.25);
+  camera.setTarget(new BABYLON.Vector3(0, lookY, 0.25));
 }
 
 /* interpolación suave entre el bloque del segmento activo y el siguiente (0.45 s) */
@@ -314,60 +371,93 @@ function blinkEn(t, blinks) {
   return Math.max(0.06, f);
 }
 
+function registrarDescendientes(raiz, registro) {
+  /* Babylon: morph targets viven en mesh.morphTargetManager; los huesos glTF importan
+     como TransformNode + skeleton vinculado. El rig por nodos usa transformaciones. */
+  const morfos = new Map(), huesos = new Map(), ns = new Map();
+  const meshes = raiz.getChildMeshes(false);
+  for (const mesh of meshes) {
+    if (mesh.morphTargetManager) {
+      for (const tgt of mesh.morphTargetManager.getTargets()) {
+        if (!morfos.has(tgt.name)) morfos.set(tgt.name, []);
+        morfos.get(tgt.name).push(tgt);
+        registro.morfos.push(tgt.name);
+      }
+    }
+    if (mesh.skeleton) {
+      for (const bn of mesh.skeleton.bones) {
+        const tn = bn.getTransformNode();
+        if (tn) {
+          huesos.set(String(tn.name).toLowerCase(), tn);
+          registro.huesos.push(tn.name);
+          if (!ns.has(String(tn.name).toLowerCase())) {
+            ns.set(String(tn.name).toLowerCase(), {
+              obj: tn, basePos: { x: tn.position.x, y: tn.position.y, z: tn.position.z },
+              baseScale: { x: tn.scaling.x, y: tn.scaling.y, z: tn.scaling.z } });
+            registro.nodos.push(tn.name);
+          }
+        } else {
+          huesos.set(String(bn.name).toLowerCase(), bn);
+          registro.huesos.push(bn.name);
+        }
+      }
+    }
+  }
+  for (const tn of raiz.getChildTransformNodes(true)) {
+    const k = String(tn.name).toLowerCase();
+    if (tn.name && !ns.has(k)) {
+      ns.set(k, { obj: tn, basePos: { x: tn.position.x, y: tn.position.y, z: tn.position.z },
+                  baseScale: { x: tn.scaling.x, y: tn.scaling.y, z: tn.scaling.z } });
+      registro.nodos.push(tn.name);
+    }
+  }
+  return { morfos, huesos, ns };
+}
+
 window.actorInit = async () => {
   const w = CONFIG.w, h = CONFIG.h;
-  renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(1);
-  renderer.setSize(w, h);
-  document.body.appendChild(renderer.domElement);
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x10151d);
-  camera = new THREE.PerspectiveCamera(34, w / h, 0.1, 100);
+  const cv = document.createElement('canvas');
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  document.body.appendChild(cv);
+  engine = new BABYLON.Engine(cv, false,
+    { preserveDrawingBuffer: true, stencil: false, antialias: false, alpha: true }, true);
+  engine.setHardwareScalingLevel(1);
+  engine.setSize(w, h);
+  scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0x10 / 255, 0x15 / 255, 0x1d / 255, 1);
+  scene.autoClear = true;
+  camera = new BABYLON.FreeCamera("cam", new BABYLON.Vector3(0, 0, 0), scene);
+  camera.fov = 34 * D2R;          // THREE PerspectiveCamera fov es vertical, así también esto.
+  camera.minZ = 0.1; camera.maxZ = 100;
   luz();
   suelo();
   const registro = { morfos: [], huesos: [], nodos: [] };
   if (CONFIG.glb) {
     try {
-      await new Promise((ok, fail) => new GLTFLoader().load(CONFIG.glb, (g) => {
-        scene.add(g.scene);
-        // Encuadre automático: un GLB puede venir en centímetros, pies o metros. Sin
-        // normalizar altura y apoyo al suelo, la cámara del actor queda dentro del cuerpo.
-        const caja = new THREE.Box3().setFromObject(g.scene);
-        const tam = new THREE.Vector3(), cent = new THREE.Vector3();
-        caja.getSize(tam); caja.getCenter(cent);
-        const escala = 1.62 / (tam.y || 1.62);
-        g.scene.scale.setScalar(escala);
-        g.scene.position.set(-cent.x * escala, -caja.min.y * escala, -cent.z * escala);
-        const morfos = new Map(), huesos = new Map(), ns = new Map();
-        g.scene.traverse((o) => {
-          if (o.morphTargetDictionary) {
-            for (const [k, idx] of Object.entries(o.morphTargetDictionary)) {
-              if (!morfos.has(k)) morfos.set(k, []);
-              morfos.get(k).push({ obj: o, idx });
-            }
-            registro.morfos.push(...Object.keys(o.morphTargetDictionary));
-          }
-          if (o.isBone) { huesos.set(o.name.toLowerCase(), o); registro.huesos.push(o.name); }
-          /* traverse va del padre al hijo: el primero con ese nombre ES el nodo glTF */
-          if (o.name && !ns.has(o.name.toLowerCase())) {
-            ns.set(o.name.toLowerCase(), { obj: o,
-              basePos: [o.position.x, o.position.y, o.position.z],
-              baseScale: [o.scale.x, o.scale.y, o.scale.z] });
-            registro.nodos.push(o.name);
-          }
-        });
-        glb = { morfos, huesos, modelo: g.scene };
-        nodos = ns;
-        scene.updateMatrixWorld(true);
-        /* El suelo del set es para la figura procedural (pies en -1.45); un GLB se apoya en y=0. */
-        if (floor) floor.position.y = 0;
-        /* Encuadre relativo a la cara: sin esto, la cámara del actor mira el pecho de un
-           personaje de cuerpo entero y el primer plano no muestra la boca. */
-        const cab = ns.get(String(CONFIG.rig_map.cabeza_nodo || 'head').toLowerCase());
-        if (cab) { const v = new THREE.Vector3(); cab.obj.getWorldPosition(v); caraY = v.y; }
-        modo = 'glb';
-        ok();
-      }, undefined, (e) => fail(e)));
+      const imp = await BABYLON.SceneLoader.ImportMeshAsync("", "", CONFIG.glb, scene);
+      const raiz = imp.rootMesh;
+      // Encuadre automático: un GLB puede venir en centímetros, pies o metros. Sin
+      // normalizar altura y apoyo al suelo, la cámara del actor queda dentro del cuerpo.
+      const [minV, maxV] = raiz.getHierarchyBoundingVectors(true, (n) => true);
+      const tamY = maxV.y - minV.y;
+      const tamXZ = { x: (maxV.x - minV.x) / 2 + minV.x, z: (maxV.z - minV.z) / 2 + minV.z };
+      const escala = 1.62 / (Math.max(tamY, 1e-3) || 1.62);
+      raiz.scaling.set(escala, escala, escala);
+      raiz.position.set(-tamXZ.x * escala, -minV.y * escala, -tamXZ.z * escala);
+      const { morfos, huesos, ns } = registrarDescendientes(raiz, registro);
+      glb = { morfos, huesos, modelo: raiz };
+      nodos = ns;
+      /* El suelo del set es para la figura procedural (pies en -1.45); un GLB se apoya en y=0. */
+      if (floor) floor.position.y = 0;
+      /* Encuadre relativo a la cara: sin esto, la cámara del actor mira el pecho de un
+         personaje de cuerpo entero y el primer plano no muestra la boca. */
+      const cab = ns.get(String(CONFIG.rig_map.cabeza_nodo || 'head').toLowerCase());
+      if (cab) {
+        raiz.computeWorldMatrix(true);
+        cab.obj.computeWorldMatrix(true);
+        caraY = cab.obj.getAbsolutePosition().y;
+      }
+      modo = 'glb';
     } catch (e) {
       console.error('GLB yük falló:', e);
       glb = null;
@@ -388,7 +478,7 @@ window.actorCargar = (tl) => {
 };
 
 window.actorFrame = (t) => {
-  if (!estado_tl || !renderer) return false;
+  if (!estado_tl || !engine) return false;
   const rig = rigEn(t, estado_tl.segs, estado_tl.trans_s);
   const ap = visemaEn(t, estado_tl.cues);
   ultimo_ap = ap;
@@ -398,11 +488,17 @@ window.actorFrame = (t) => {
     aplicarAGlb(rig, ap, blink, t);
   }
   if (fig) aplicarAProcedural(rig, ap, blink, t);
-  renderer.render(scene, camera);
+  scene.render();
   return true;
 };
 
-window.actorSnapshot = () => renderer.domElement.toDataURL('image/png').split(',')[1];
+window.actorSnapshot = () => cvToB64();
+
+function cvToB64() {
+  const cv = document.body.querySelector('canvas');
+  return cv.toDataURL('image/png').split(',')[1];
+}
+
 window.actorEstado = () => ({ modo, apertura_boca: ultimo_ap });
 </script>
 </html>

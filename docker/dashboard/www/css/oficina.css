@@ -1,0 +1,348 @@
+/* ═══════════ OFICINA DE AGENTES ═══════════
+   Los colores del estado son los del resto del CRM: verde en turno, ámbar en
+   reposo, rojo si terminó mal, gris si no hay dato. No se inventa un cuarto. */
+.of-chips{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 14px}
+.of-chip{display:inline-flex;align-items:baseline;gap:7px;padding:7px 12px;border:1px solid var(--line);
+  border-radius:999px;background:linear-gradient(180deg,var(--panel),var(--panel2));font-size:10.5px;
+  color:var(--muted);letter-spacing:.04em}
+.of-chip b{font-family:var(--display);font-size:15px;font-weight:700;color:var(--txt)}
+.of-chip.of-activo b{color:var(--emerald-hi)}
+.of-chip.of-reposo b{color:var(--amber)}
+.of-chip.of-sinturno b,.of-chip.of-mal b{color:var(--red)}
+/* El chip del latido: azul, el mismo color del anillo en la escena 3D. Es el
+   único que cuenta corridas iniciadas de verdad, no jobs registrados. */
+.of-chip.of-curso{border-color:rgba(47,122,209,.5);background:rgba(47,122,209,.12)}
+.of-chip.of-curso b{color:#9dc4ee}
+
+.of-traba{border:1px solid rgba(245,158,11,.35);border-radius:var(--r-m);background:rgba(245,158,11,.06);
+  padding:10px 14px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px}
+/* Con display:flex el atributo hidden NO alcanza (la UA lo pierde contra la
+   clase): sin esta línea quedaba un marco ámbar vacío arriba de la pantalla. */
+.of-traba[hidden]{display:none}
+.of-bloqueo{font-size:11.5px;color:var(--txt);line-height:1.5}
+.of-bloqueo b{font-family:var(--display);color:var(--amber);font-size:14px;margin-right:2px}
+.of-bloqueo i{display:block;font-style:normal;color:var(--muted);font-size:10px;margin-top:2px}
+
+.of-area{margin-bottom:20px}
+.of-area-head{display:flex;align-items:center;gap:9px;font-family:var(--cond);font-size:12px;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 9px}
+.of-area-head span{font-size:15px}
+.of-area-head small{margin-left:auto;font-family:'Inter',sans-serif;font-size:9.5px;letter-spacing:0;
+  color:var(--muted2);text-transform:none}
+.of-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:10px}
+
+.of-card{border:1px solid var(--line);border-radius:var(--r-m);padding:12px 13px;
+  background:linear-gradient(180deg,var(--panel),var(--panel2));display:flex;flex-direction:column;gap:8px;
+  border-left:3px solid var(--muted2)}
+.of-card.of-activo{border-left-color:var(--emerald)}
+.of-card.of-reposo{border-left-color:var(--amber2)}
+.of-card.of-sinturno{border-left-color:var(--sky)}
+.of-card.of-mal{border-left-color:var(--red)}
+.of-card header{display:flex;align-items:flex-start;gap:8px}
+.of-rol{flex:1;font-family:var(--display);font-size:14px;font-weight:600;line-height:1.25}
+.of-estado{font-family:var(--cond);font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  padding:3px 7px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--muted);white-space:nowrap}
+.of-estado.of-activo{background:rgba(16,185,129,.16);color:var(--emerald-hi)}
+.of-estado.of-reposo{background:rgba(245,158,11,.16);color:var(--amber)}
+.of-estado.of-sinturno{background:rgba(14,165,233,.16);color:var(--sky)}
+.of-estado.of-mal{background:rgba(239,68,68,.18);color:#fca5a5}
+/* Dónde vive el agente en la escena 3D: escritorio del medio o mesa de la red. */
+.of-ambito{display:block;margin-top:4px;font-family:var(--cond);font-size:8.5px;font-weight:700;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--muted2)}
+.of-ambito.of-red{color:var(--violet)}
+.of-ambito.of-fuera{color:var(--amber2)}
+.of-hace{font-size:11px;line-height:1.5;color:var(--muted);flex:1}
+/* La franja del latido aparece y se va sola: vive solo si el backend confirmó una
+   corrida iniciada (clave Redis con TTL = tope de la corrida). No es un color de
+   estado deducido del scheduler, que es lo que hacía mentir a la oficina vieja. */
+.of-latido{display:flex;align-items:baseline;gap:7px;margin:0;padding:5px 8px;
+  border:1px solid rgba(47,122,209,.45);border-radius:8px;background:rgba(47,122,209,.13);
+  font-size:10.5px;line-height:1.35;color:#9dc4ee;min-width:0}
+.of-latido b{flex:1;min-width:0;font-weight:600;color:#cfe2f7;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.of-latido i{font-style:normal;font-family:var(--cond);font-size:9px;letter-spacing:.06em;
+  color:#7fa9d8;white-space:nowrap}
+.of-datos{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.of-hoy{display:inline-flex;align-items:baseline;gap:6px}
+.of-hoy b{font-family:var(--display);font-size:19px;font-weight:700;color:var(--txt)}
+.of-hoy i{font-style:normal;font-size:9.5px;color:var(--muted2);letter-spacing:.04em}
+.of-hoy.of-nada b{font-size:11px;color:var(--muted2)}
+.of-ultima{font-size:10px;color:var(--muted);text-align:right;line-height:1.35}
+.of-ultima i{display:block;font-style:normal;font-size:9px;color:var(--muted2)}
+.of-ultima.of-ok{color:var(--emerald-hi)}
+.of-ultima.of-mal{color:#fca5a5}
+.of-ultima.of-nada{color:var(--muted2)}
+.of-card footer{display:flex;justify-content:space-between;gap:8px;align-items:center;
+  border-top:1px solid var(--line);padding-top:7px}
+.of-card footer code{font-size:9px;color:var(--muted2);word-break:break-all}
+.of-card footer em{font-style:normal;font-size:9px;color:var(--muted2);text-align:right}
+.of-vacio{text-align:center;padding:40px 20px;color:var(--muted);font-size:12px}
+
+/* ═══ MODO: Oficina 3D ↔ Lista ═══
+   Clase propia (.of-modo-b / data-of) a propósito: app.js y mediodes.js limpian
+   '.tab,.litem' de TODO el documento y escuchan todos los [data-mv], y un toggle
+   con esas clases se apagaba solo al cambiar de vista. */
+.of-modo{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--line);border-radius:11px;
+  background:var(--panel2)}
+.of-modo-b{padding:6px 11px;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;
+  font-family:var(--cond);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  white-space:nowrap;transition:color .18s,background .18s}
+.of-modo-b:hover{color:var(--txt)}
+.of-modo-b.on{color:var(--txt);background:rgba(16,185,129,.16)}
+
+/* ═══ LA ESCENA ═══
+   Altura fija: un canvas que mide su contenedor mientras el contenedor mide al
+   canvas nunca termina de asentarse. touch-action:none porque el arrastre orbita
+   la cámara; si no, en el celular la página se desplaza en vez de girar. */
+#of3D{position:relative;height:min(72vh,640px);margin-bottom:14px;overflow:hidden;
+  border:1px solid var(--line);border-radius:var(--r-l);touch-action:none;
+  background:radial-gradient(120% 90% at 50% 10%,#14231c 0%,#0b130f 55%,#070a08 100%)}
+#of3D canvas{display:block;outline:none}
+/* El CSS2DRenderer superpone su <div> a todo el contenedor: sin pointer-events:none
+   el raycast del click no llega nunca al canvas y la oficina se vuelve muda. */
+.of-3d-capa{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+
+.of-3d-aviso{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:12px 16px;pointer-events:none;
+  font-family:var(--cond);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  background:linear-gradient(180deg,rgba(7,10,8,0),rgba(7,10,8,.9))}
+.of-3d-aviso[hidden]{display:none}
+.of-3d-leyenda{position:absolute;top:10px;left:10px;z-index:2;display:flex;gap:5px 10px;
+  flex-wrap:wrap;max-width:min(500px,calc(100% - 150px));padding:7px 9px;border-radius:9px;
+  background:rgba(7,10,8,.8);color:var(--txt);font-size:10px;pointer-events:none}
+.of-3d-leyenda[hidden]{display:none}
+.of-3d-leyenda span{white-space:nowrap}.of-3d-leyenda i{display:inline-block;width:7px;height:7px;
+  border-radius:50%;margin-right:4px;background:#d9a441}
+.of-3d-leyenda i.curso{background:#2f7ad1}.of-3d-leyenda i.ok{background:#4f9d69}
+.of-3d-leyenda i.error{background:#d94141}.of-3d-leyenda i.reposo{background:#8a8a8a}
+.of-3d-leyenda small{width:100%;color:var(--muted);font-size:9px;line-height:1.3}
+
+.of-3d-cam{position:absolute;top:10px;right:10px;z-index:3;display:flex;gap:4px}
+.of-3d-cam button{width:30px;height:30px;border:1px solid var(--line);border-radius:9px;cursor:pointer;
+  background:rgba(7,10,8,.72);color:var(--muted);font-size:14px;line-height:1;
+  display:inline-flex;align-items:center;justify-content:center;transition:color .18s,border-color .18s}
+.of-3d-cam button:hover{color:var(--txt);border-color:var(--emerald)}
+
+/* En el celular el canvas no puede reclamarse el gesto vertical: con
+   touch-action:none la página queda imposible de scrollear desde adentro de la
+   oficina. Pan-y le devuelve la vertical al documento, deja la horizontal para
+   orbitar y el pellizco hace zoom (oficina3d.js). Botones más grandes: son
+   superficies táctiles. */
+@media(max-width:720px){
+  #of3D{height:min(56vh,440px);touch-action:pan-y}
+  .of-3d-cam{top:6px;right:6px}
+  .of-3d-cam button{width:38px;height:38px;font-size:16px}
+  .of-ficha{left:8px;right:8px;bottom:8px;width:auto}
+  /* Quince rótulos en 380 px son sopa: en el celular el oficio se ve tocando el
+     puesto (la ficha trae el rol y la tarea), no flotando sobre la sala. */
+  .of-label{display:none}
+  /* Con # delante: la regla general de .of-cartel b está MÁS ABAJO en la hoja y
+     sin el id ganaba siempre, deja el cartel en 15 px en el celular. */
+  #of3D .of-cartel b{font-size:12px;letter-spacing:.12em}
+  #of3D .of-cartel{max-width:120px}
+}
+
+/* Rótulos y globos (DOM sobre la escena). Pegados arriba del puesto, por eso
+   se colocan con transform y no con margen. El oficio va en SEGUNDA línea: al
+   dejarlo suelto, "NIDIA BUSTOS" + "COMMUNITY MANAGER" se escribían corridos y
+   el rótulo medía el doble de ancho, que es justo lo que se pisaba con el del
+   puesto de al lado en las filas de atrás.
+   LLEVA PLACA: sin fondo, el gris claro sobre el parquet se licuaba en las filas
+   del fondo, donde la perspectiva apila diez rótulos en veinte píxeles de pantalla. */
+.of-label{font-family:var(--cond);font-size:10px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted2);pointer-events:none;white-space:nowrap;
+  padding:2px 6px 3px;border-radius:7px;background:rgba(7,10,8,.62);
+  box-shadow:0 3px 10px rgba(0,0,0,.35)}
+.of-label i{display:block;font-style:normal;font-size:8.5px;font-weight:400;
+  letter-spacing:.06em;color:var(--muted);opacity:.85}
+.of-label{border-left:3px solid #d9a441}
+.of-label[data-estado="curso"]{border-left-color:#2f7ad1}
+.of-label[data-estado="ok"]{border-left-color:#4f9d69}
+.of-label[data-estado="error"]{border-left-color:#d94141}
+.of-label[data-estado="reposo"]{border-left-color:#8a8a8a}
+/* El cartel de la pared identifica el medio y contrasta sobre el muro. */
+.of-cartel{text-align:center;pointer-events:none;max-width:170px;
+  padding:4px 9px 5px;border-radius:9px;border:1px solid rgba(255,255,255,.13);
+  background:rgba(7,10,8,.82);box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.of-cartel b{display:block;font-family:var(--cond);font-size:15px;font-weight:700;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--txt);line-height:1.15}
+.of-cartel i{display:block;font-style:normal;font-size:10px;letter-spacing:.08em;
+  color:var(--muted);margin-top:2px}
+.of-globo{max-width:190px;padding:5px 9px;border-radius:10px;border:1px solid var(--line);
+  background:rgba(7,10,8,.86);color:var(--txt);font-size:10.5px;line-height:1.35;
+  pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.of-globo b{font-family:var(--cond);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  display:block;color:var(--muted2);margin-bottom:1px}
+.of-globo.curso{border-color:rgba(47,122,209,.65);color:#d7eaff}
+.of-globo.ok{border-color:rgba(16,185,129,.5)}
+.of-globo.ok b{color:var(--emerald-hi)}
+.of-globo.mal{border-color:rgba(239,68,68,.55);background:rgba(38,10,10,.9)}
+.of-globo.mal b{color:#fca5a5}
+.of-globo.reposo{border-color:rgba(245,158,11,.45)}
+.of-globo.reposo b{color:var(--amber)}
+
+/* Ficha del puesto clickeado: se apoya en ofTarjeta(), o sea lo mismo que la Lista. */
+.of-ficha{position:absolute;left:12px;bottom:12px;z-index:4;width:min(320px,calc(100% - 24px));
+  padding:8px;border:1px solid var(--line);border-radius:var(--r-m);
+  background:rgba(7,10,8,.92);backdrop-filter:blur(6px);box-shadow:0 12px 32px rgba(0,0,0,.5)}
+.of-ficha-x{position:absolute;top:-9px;right:-9px;width:22px;height:22px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--muted);cursor:pointer;
+  font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;z-index:1}
+.of-ficha-x:hover{color:var(--txt)}
+.of-ficha .of-card{border-left-width:3px}
+.of-ficha-pie{display:flex;justify-content:space-between;gap:8px;margin-top:7px;padding-top:7px;
+  border-top:1px solid var(--line);font-size:9px;color:var(--muted2)}
+.of-ficha-pie code{word-break:break-all}
+.of-ficha-pie span:empty{display:none}
+
+/* En pantallas angostas la escena manda y la ficha se acuesta arriba del todo:
+   abajo ya está el nav móvil. */
+@media(max-width:700px){
+  #of3D{height:min(54vh,420px)}
+  .of-ficha{left:8px;right:8px;bottom:auto;top:46px;width:auto}
+  .of-globo{max-width:150px}
+}
+
+/* ═══ LA BANDEJA DE LA RED ═══
+   Va arriba de cualquier modo y es la única tarjeta que ESCRIBE en las páginas:
+   por eso cada fila muestra el techo (cuántas respuestas se permiten hoy) en la
+   cabecera, no escondido detrás de un botón. */
+.of-mensajes{border:1px solid var(--line);border-radius:var(--r-m);
+  background:linear-gradient(180deg,var(--panel),var(--panel2));padding:12px 14px;margin-bottom:16px;
+  display:flex;flex-direction:column;gap:10px}
+.of-mensajes[hidden]{display:none}
+.of-mens-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  font-family:var(--cond);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.of-mens-head b{font-family:var(--display);font-size:19px;font-weight:700;color:var(--txt)}
+.of-mens-head i{font-style:normal;font-size:10px;letter-spacing:.04em;text-transform:none;color:var(--muted2)}
+.of-mens-gate{margin-left:auto;padding:3px 9px;border-radius:999px;font-size:9.5px;
+  border:1px solid rgba(14,165,233,.4);color:var(--sky);text-transform:none;letter-spacing:.04em}
+.of-mens-gate.borrador{border-color:rgba(245,158,11,.4);color:var(--amber)}
+.of-mens-gate.apagada{border-color:var(--line);color:var(--muted2)}
+.of-mens-gate.callada{border-color:rgba(148,163,184,.45);color:var(--muted)}
+.of-mens{border:1px solid var(--line);border-left:3px solid var(--muted2);border-radius:var(--r-s);
+  padding:9px 11px;display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.02)}
+.of-mens.borrador{border-left-color:var(--amber2)}
+.of-mens.fallido{border-left-color:var(--red)}
+.of-mens.pendiente{border-left-color:var(--sky)}
+.of-mens header{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:9.5px;color:var(--muted2)}
+.of-mens header b{font-family:var(--cond);font-size:11px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--txt)}
+.of-mens header em{font-style:normal;color:var(--muted)}
+.of-mens header a{color:var(--sky);text-decoration:none}
+.of-mens-est{padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.06);
+  font-family:var(--cond);letter-spacing:.08em;text-transform:uppercase}
+.of-mens-est.fallido{background:rgba(239,68,68,.16);color:#fca5a5}
+.of-mens-est.borrador{background:rgba(245,158,11,.14);color:var(--amber)}
+.of-mens p{font-size:12px;line-height:1.5;color:var(--txt);margin:0}
+.of-mens small{display:block;font-size:9.5px;color:var(--muted2);line-height:1.4}
+.of-mens-fallo{color:#fca5a5}
+.of-mens footer{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+.of-mens-box,.of-ch-box{flex:1;min-width:200px;resize:vertical;padding:7px 9px;font-size:11.5px;
+  font-family:'Inter',sans-serif;color:var(--txt);background:rgba(0,0,0,.22);
+  border:1px solid var(--line);border-radius:var(--r-s)}
+.of-mens-box:focus,.of-ch-box:focus{outline:none;border-color:var(--emerald)}
+.of-mens-acts{display:flex;gap:5px}
+.of-mens-b,.of-ch-b{padding:5px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;
+  background:var(--panel2);color:var(--muted);font-family:var(--cond);font-size:10px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;transition:color .18s,border-color .18s}
+.of-mens-b:hover,.of-ch-b:hover{color:var(--txt);border-color:var(--emerald)}
+.of-mens-b.ok{color:var(--emerald-hi);border-color:rgba(16,185,129,.45)}
+.of-mens-b:disabled,.of-ch-b:disabled{opacity:.5;cursor:default}
+.of-mens-vacia{font-size:11px;color:var(--muted2);margin:0}
+
+/* ═══ HABLAR CON EL AGENTE ═══ */
+.of-charla{border:1px solid rgba(167,139,250,.35);border-radius:var(--r-m);
+  background:linear-gradient(180deg,var(--panel),var(--panel2));padding:11px 13px;margin-bottom:16px}
+.of-charla[hidden]{display:none}
+.of-ch-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-bottom:8px;
+  border-bottom:1px solid var(--line)}
+.of-ch-head div{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.of-ch-head b{font-family:var(--display);font-size:15px;font-weight:700;color:var(--txt)}
+.of-ch-head span{font-family:var(--cond);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted)}
+.of-ch-head em{font-style:normal;font-size:10px;color:var(--violet)}
+.of-ch-head .of-ch-b{margin-left:auto}
+.of-ch-head .of-ch-b + .of-ch-b{margin-left:0}
+.of-ch-hilo{max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:9px 0}
+.of-ch-msg{max-width:86%;padding:8px 11px;border-radius:12px;font-size:11.5px;line-height:1.5}
+.of-ch-msg.usuario{align-self:flex-end;background:rgba(167,139,250,.12);
+  border:1px solid rgba(167,139,250,.3)}
+.of-ch-msg.agente{align-self:flex-start;background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.of-ch-msg p{margin:0;color:var(--txt);white-space:pre-wrap}
+.of-ch-msg time{display:block;font-size:9px;color:var(--muted2);margin-top:4px}
+.of-ch-vacio{font-size:11px;color:var(--muted2);margin:6px 0}
+/* La franja del legajo: la faena actual y las últimas líneas que el job dijo
+   mientras recorría. Se repinta sola (15 s + el SSE `agente`) sin tocar el
+   textarea, porque reescribir el panel borraba lo que el operator estaba escribiendo. */
+.of-ch-latido{padding:7px 9px;border:1px solid var(--line);border-radius:9px;
+  background:rgba(255,255,255,.03);margin-bottom:8px}
+.of-ch-latido.curso{border-color:rgba(47,122,209,.45);background:rgba(47,122,209,.1)}
+.of-ch-curso{display:flex;align-items:baseline;gap:7px;margin:0;font-size:11px;color:#cfe2f7}
+.of-ch-curso b{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.of-ch-curso i{font-style:normal;font-family:var(--cond);font-size:9px;color:#7fa9d8;white-space:nowrap}
+.of-ch-inactivo{margin:0;font-size:10.5px;color:var(--muted2)}
+.of-ch-bita{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;
+  border-top:1px dashed var(--line);padding-top:6px}
+.of-ch-bita li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  font-size:10px;color:var(--muted)}
+.of-ch-bita time{font-size:9px;color:var(--muted2);white-space:nowrap}
+.of-ch-cuerpo{display:flex;flex-direction:column;gap:7px;padding-top:9px;border-top:1px solid var(--line)}
+.of-ch-pie{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.of-ch-pie select{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+  color:var(--muted);font-family:var(--cond);font-size:10.5px}
+.of-ch-pie .enviar{margin-left:auto;color:var(--emerald-hi);border-color:rgba(16,185,129,.45)}
+/* La acción que propone el agente: antes → después, con su estado. Se muestra SIEMPRE,
+   incluso rechazada: un cambio que desaparece sin decir por qué es lo que nadie audita. */
+.of-ch-acc{margin-top:7px;padding:7px 9px;border:1px dashed var(--line);border-radius:var(--r-s);
+  display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--muted)}
+.of-ch-acc b{font-family:var(--cond);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--sky)}
+.of-ch-acc code{font-size:9.5px;color:var(--txt);word-break:break-all}
+.of-ch-acc em{font-style:normal;color:var(--muted2);line-height:1.45}
+.of-ch-acc .of-ch-b{align-self:flex-start}
+.of-ch-acc.aplicada{border-color:rgba(16,185,129,.45)}
+.of-ch-acc.aplicada b{color:var(--emerald-hi)}
+.of-ch-acc.pendiente,.of-ch-acc.aprobado{border-color:rgba(245,158,11,.5)}
+.of-ch-acc.pendiente b,.of-ch-acc.aprobado b{color:var(--amber)}
+.of-ch-acc.fallida,.of-ch-acc.rechazada{border-color:rgba(239,68,68,.5)}
+.of-ch-acc.fallida b,.of-ch-acc.rechazada b{color:#fca5a5}
+.of-ch-acc.revertido b{color:var(--muted2)}
+
+.of-hablar{padding:4px 9px;border:1px solid var(--line);border-radius:8px;cursor:pointer;
+  background:var(--panel2);color:var(--muted);font-family:var(--cond);font-size:9.5px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.of-hablar:hover{color:var(--violet);border-color:rgba(167,139,250,.45)}
+.of-ficha .of-hablar{background:rgba(167,139,250,.1)}
+
+@media(max-width:720px){
+  .of-mens-gate{margin-left:0;width:100%}
+  .of-mens footer{flex-direction:column}
+  .of-mens-acts{width:100%;justify-content:flex-end}
+  .of-ch-msg{max-width:96%}
+}
+
+/* Laboratorio de Experimentos */
+.of-experimentos{margin:14px 0 18px;padding:14px 16px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(0,0,0,.12))}
+.of-exp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.of-exp-kicker{display:block;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.of-exp-title{font-size:16px;font-weight:600;margin-top:2px}
+.of-exp-btn{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:var(--text);padding:6px 10px;border-radius:8px;cursor:pointer}
+.of-exp-lista{display:flex;flex-direction:column;gap:8px}
+.of-exp-item{padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:rgba(0,0,0,.18)}
+.of-exp-nombre{font-weight:500}
+.of-exp-meta{font-size:12px;color:var(--muted);margin-top:2px}
+.of-exp-vacio{color:var(--muted);font-size:13px}
+
+/* Estudios sociales semanales */
+.social-estudio{border:1px solid var(--line);border-radius:var(--r-m);background:var(--panel);padding:18px;margin-bottom:14px}
+.social-estudio header{display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap}
+.social-estudio h3{font-family:var(--display);font-size:17px;margin:0}
+.social-estudio header span,.social-meta{color:var(--muted);font-size:11px}
+.social-estudio p{font-size:12px;line-height:1.55}
+.social-campo{margin-top:13px}
+.social-campo h4{font-size:11px;color:var(--emerald-hi);margin:0 0 4px}
+.social-campo p{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;color:var(--txt)}
+.social-controles{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.social-controles label{font-size:12px;color:var(--muted)}
+.social-controles select{max-width:100%;min-width:220px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--txt)}

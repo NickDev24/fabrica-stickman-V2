@@ -1,0 +1,147 @@
+{
+  "name": "stickman_story_engine_v2",
+  "resolucion_de_contradiccion": "Existían dos modelos narrativos conviviendo sin hablarse: los 5 LATIDOS (únicos que corren en código, pipeline/stages/guion.py:137-150) y los 6 BLOQUES (únicos que estaban en esta config, nunca leídos). No son rivales: los latidos son la INTENCIÓN retórica, los bloques son la MEDICIÓN temporal. Se mapean 1:1 y así queda cerrado.",
+  "mapeo_latidos_bloques": [
+    {
+      "latido": "1 GANCHO DORADO",
+      "bloque": "hook",
+      "tiempo_s": [
+        0,
+        15
+      ]
+    },
+    {
+      "latido": "2 QUIEBRE DE LA ASUNCIÓN",
+      "bloque": "planteamiento",
+      "tiempo_s": [
+        15,
+        60
+      ]
+    },
+    {
+      "latido": "3 AL DESCUBRIMIENTO",
+      "bloque": "exploracion",
+      "tiempo_s": [
+        60,
+        330
+      ]
+    },
+    {
+      "latido": "4 LA VERDAD FINA",
+      "bloque": "inflexion",
+      "tiempo_s": [
+        330,
+        450
+      ]
+    },
+    {
+      "latido": "5 ELEVACIÓN",
+      "bloque": "giro_practico",
+      "tiempo_s": [
+        450,
+        540
+      ]
+    },
+    {
+      "latido": "5 DEBATE",
+      "bloque": "cierre",
+      "tiempo_s": [
+        540,
+        600
+      ]
+    }
+  ],
+  "modes": {
+    "verifiable": {
+      "require_sources": true,
+      "require_fidelity_gate": true,
+      "allow_fiction": false
+    },
+    "history": {
+      "require_sources": false,
+      "require_fidelity_gate": true,
+      "allow_fiction": false,
+      "allow_reconstruction_marked": true
+    }
+  },
+  "default_mode": "history",
+  "golden_hook": {
+    "type": "question",
+    "person": "second_person",
+    "words_objetivo": [
+      6,
+      12
+    ],
+    "words_tolerancia": [
+      4,
+      16
+    ],
+    "razon_tolerancia": "16 palabras = 7,1 s a 2,24 pal/s (ritmo efectivo medido de la voz canónica). El gate del código acepta 4-16 (guion.py:77) y tests/test_hook.py lo verifica; el PROMPT debe pedir 6-12 para que el gancho quepa en los 3 primeros segundos.",
+    "must_end_with_question": true,
+    "forbid_patterns": [
+      "¿sabías que",
+      "^en (el año|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)",
+      "la historia",
+      "este es el caso",
+      "en un mundo",
+      "arcamos"
+    ],
+    "require_curiosity_gap": true,
+    "no_resuelve_en_el_hook": true
+  },
+  "curiosity_loop": {
+    "formula": [
+      "open_loop",
+      "delay_reward",
+      "close_and_chain"
+    ],
+    "interval_seconds": [
+      45,
+      90
+    ],
+    "count_objetivo_por_episodio": [
+      6,
+      8
+    ],
+    "chain_rule": "al cerrar un bucle, abrir el siguiente antes de que el espectador pueda irse",
+    "plantilla_verbal": [
+      "El primer error fue X. Pero eso lo llevó a un problema que nadie veía venir...",
+      "Lo que no se dijo es que eso tenía una causa. Y la causa era otra...",
+      "Ahí parece que todo se pierde. Justamente ahí aparece el dato que cambia la lectura."
+    ]
+  },
+  "protagonista_stickman": {
+    "require": true,
+    "regla": "el stickman es el ACTOR de la historia, no el presentador de datos",
+    "arco": [
+      "situacion_normal",
+      "decision_aparentemente_logica",
+      "consecuencia_invisible",
+      "punto_mas_bajo",
+      "comprension_nueva"
+    ],
+    "prueba_de_fuego": "Si se puede resumir como 'lista de Y datos', está MAL. Debe resumirse como 'la historia de X'."
+  },
+  "bloques": "ver factory/templates/script_template_8_10min.json (fuente única de tiempos y palabras)",
+  "anti_patterns": [
+    "lista_de_datos",
+    "enumeracion_plana",
+    "intro_contexto_fecha",
+    "hook_sabias_que",
+    "gancho_que_responde_su_propia_pregunta",
+    "revelacion_en_el_primer_minuto",
+    "giro_practico_despegado_de_la_historia",
+    "cierre_seco_o_con_CTA_de_suscripcion_como_añadido"
+  ],
+  "conflicto_editorial_resuelto": {
+    "conflicto": "pipeline/nichos.py FORMATOS['conteo'] dice '5 -> 1' y 'el número en pantalla es el motor de retención', que es literalmente el anti-patrón 'lista' que esta config prohíbe.",
+    "resolucion": "CONTEO queda PROHIBIDO para episodios stickman de 8-10 min. Solo se permite como formato de Short (<=60s). Si un episodio quiere estructura de conteo, debe reescribirse como escalada: cada ítem es una consecuencia que sube la apuesta, no un ítem paralelo.",
+    "punto_de_aplicacion": "pipeline/nichos.py: elegir_formato() (línea 526) debe filtrar FORMATOS por canal_formatos_permitidos en modo episodio."
+  },
+  "wiring": {
+    "estado_actual": "archivo muerto: ningún .py lo importa (grep 'story_engine' en *.py = 0 hits propios).",
+    "punto_de_carga_1": "pipeline/stages/guion.py:137 motor_retencion -> armar el texto del prompt desde mapeo_latidos_bloques + golden_hook + curiosity_loop en vez del string hardcodeado.",
+    "punto_de_carga_2": "pipeline/gates.py: agregar gate_bucles(script) que cuente aperturas/cierres de bucle con la plantilla_verbal y exija count_objetivo; correrlo en la misma cadena de guion.py:180-221.",
+    "punto_de_carga_3": "pipeline/stages/keyframes.py: consumir curiosity_loop.interval_seconds para forzar un cambio de escena/beat en esos timestamps (hoy los beats se cortan solos cada 3.5-5.5s sin relación con el guion)."
+  }
+}

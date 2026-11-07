@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PULSO Curioso — Fábrica de Contenido</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="css/oficina.css">
 </head>
 <body>
 
@@ -33,6 +34,7 @@
     <button class="rail-item" data-vista="metricas">📈 <span>Métricas</span></button>
     <button class="rail-item" data-vista="conectores">🔌 <span>Conectores MCP</span></button>
     <button class="rail-item" data-vista="agentes">🤖 <span>Agentes del Pipeline</span></button>
+    <button class="rail-item" data-vista="oficina3d">🏢 <span>Oficina 3D</span></button>
     <button class="rail-item" data-vista="transmision">🖥 <span>Transmisión en vivo</span></button>
     <div class="rail-estado">
       <span id="rail-modo" class="rchip">—</span>
@@ -294,6 +296,19 @@
             </div>
             <div id="agente-msg" style="font:500 12px var(--sans); color:var(--tinta-2); min-height:16px;"></div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ────── OFICINA 3D ────── -->
+    <section id="vista-oficina3d" class="vista" hidden>
+      <div class="seccion">
+        <div class="hf-cab" style="margin-bottom:14px;">
+          <h2 class="sec-tit">Oficina 3D — agentes y actividad</h2>
+          <p class="cm-det" style="margin:0;">Escena 3D de la fábrica: cada agente es un personaje, su color indica estado (verde ok, azul trabajando, rojo error). Arrastrá para orbitar, scroll para zoom.</p>
+        </div>
+        <div id="of3D" style="position:relative; width:100%; height:640px; min-height:480px; background:#0b1120; border:1px solid var(--borde); border-radius:var(--radio); overflow:hidden;">
+          <div class="of-3d-aviso" style="position:absolute; left:12px; top:12px; color:var(--tinta-2); font:12px var(--mono);">Cargando la oficina 3D…</div>
         </div>
       </div>
     </section>

@@ -594,36 +594,68 @@ def _leer_metricas() -> dict:
                 filas.append(json.loads(linea))
             except json.JSONDecodeError:
                 continue
+    # Fallback: si no hay métricas locales, consultar Zernio en tiempo real
+    if not filas:
+        try:
+            import urllib.request
+            env = {}
+            for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+                if "=" in line and not line.strip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
+            key = env.get("ZERNIO_API_KEY", "")
+            if key:
+                req = urllib.request.Request(
+                    "https://zernio.com/api/v1/analytics",
+                    headers={"Authorization": f"Bearer {key}"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    datos = json.loads(resp.read().decode("utf-8"))
+                for post in datos.get("posts", []):
+                    for pl in (post.get("platforms") or []):
+                        a = pl.get("analytics") or {}
+                        filas.append({
+                            "slug": post.get("content", "")[:40],
+                            "plataforma": pl.get("platform", ""),
+                            "fecha": (post.get("publishedAt") or "")[:10],
+                            "vistas": a.get("views", 0) or a.get("impressions", 0),
+                            "likes": a.get("likes", 0),
+                            "comentarios": a.get("comments", 0),
+                            "compartidos": a.get("shares", 0) or a.get("reposts", 0),
+                            "seguidores": a.get("follows", 0),
+                        })
+        except Exception:
+            pass
     vacios = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0]]
     out = {"yt": None, "fb": None,
            "emocion": {"predominante": None, "reacciones": {}},
            "seguidores": 200, "seguidores_dia": [[i, 200] for i in range(7)],
            "disponible": bool(filas), "ultima_actualizacion": None}
     por_plataforma = {"youtube": "yt", "facebook": "fb"}
-    mejores = {}
+    # Agregar por plataforma: sumar vistas/likes/comentarios/compartidos de todos los posts
+    agregados = {}
     for f in filas:
-        clave = (f.get("slug"), f.get("plataforma"))
-        act = mejores.get(clave)
-        if act is None or str(f.get("fecha") or "") >= str(act.get("fecha") or ""):
-            mejores[clave] = f
-    for (slug, plataforma), f in mejores.items():
-        clave = por_plataforma.get(str(plataforma).lower())
+        pl = str(f.get("plataforma") or "").lower()
+        clave = por_plataforma.get(pl)
         if not clave:
             continue
-        prev = out[clave]
-        if prev is None or (f.get("fecha") or "") >= (prev.get("fecha") or ""):
-            out[clave] = f
+        agg = agregados.setdefault(clave, {"vistas": 0, "reacciones": 0, "comentarios": 0,
+                                           "compartidos": 0, "fecha": f.get("fecha")})
+        agg["vistas"] += (f.get("vistas") or 0)
+        agg["reacciones"] += (f.get("likes") or 0)
+        agg["comentarios"] += (f.get("comentarios") or 0)
+        agg["compartidos"] += (f.get("compartidos") or 0)
+        if str(f.get("fecha") or "") >= str(agg["fecha"] or ""):
+            agg["fecha"] = f.get("fecha")
+    for clave, agg in agregados.items():
+        pts = [[i, (f.get("vistas") or 0)] for i, f in enumerate(
+            [z for z in filas if (z.get("plataforma") or "").lower() == ("youtube" if clave == "yt" else "facebook")])]
+        out[clave] = {"vistas": agg["vistas"], "reacciones": agg["reacciones"],
+                      "comentarios": agg["comentarios"], "compartidos": agg["compartidos"],
+                      "fecha": agg["fecha"], "puntos": pts or vacios}
     for clave in ("yt", "fb"):
         f = out[clave]
-        if f:
-            v = f.get("vistas") or 0
-            out[clave] = {"vistas": v, "reacciones": f.get("likes") or 0,
-                          "comentarios": f.get("comentarios") or 0,
-                          "compartidos": f.get("compartidos") or 0,
-                          "fecha": f.get("fecha")}
-            pts = [[i, (x.get("vistas") or 0)] for i, x in enumerate(
-                [z for z in filas if (z.get("plataforma") or "").lower() == ("youtube" if clave == "yt" else "facebook")])]
-            out[clave + "_puntos"] = pts or vacios
+        if isinstance(f, dict) and "vistas" in f:
+            out[clave + "_puntos"] = f.get("puntos", vacios)
         else:
             out[clave + "_puntos"] = vacios
     emociones = {}
@@ -645,6 +677,63 @@ def _leer_metricas() -> dict:
         out["ultima_actualizacion"] = filas[-1].get("fecha")
     return out
 
+
+async def api_oficina(req: web.Request) -> web.Response:
+    """Estado de los agentes del pipeline para la Oficina 3D (vivo)."""
+    agentes_def = [
+        ("research", "Descubrimiento", "research"),
+        ("guion", "Guionista", "guion"),
+        ("visuales", "Dirección de arte", "visuales"),
+        ("narracion", "Narrador", "narracion"),
+        ("montaje", "Montajista", "montaje"),
+        ("publicacion", "Publicador", "publicacion"),
+    ]
+    slug = estado.get("ep")
+    stages = {}
+    if slug:
+        try:
+            stages = json.loads((PROJECTS / slug / "episode.json").read_text(
+                encoding="utf-8")).get("stage_status", {})
+        except (OSError, json.JSONDecodeError):
+            stages = {}
+    corriendo = estado.get("modo") == "corriendo"
+    out = []
+    for aid, nombre, stage_key in agentes_def:
+        val = stages.get(stage_key, "pending")
+        if val in ("done", "gate_pass"):
+            estado_ag = "ok"
+            en_curso = False
+        elif val in ("pending", None):
+            estado_ag = "reposo"
+            en_curso = False
+        else:
+            estado_ag = "ok"
+            en_curso = False
+        # si la fábrica corre y este stage es el que está en curso (no done), marcar trabajando
+        if corriendo and val not in ("done", "gate_pass", "pending", None):
+            estado_ag = "curso"
+            en_curso = True
+        # heurística: si el stage actual del episodio es este y no está done → trabajando
+        if corriendo and val == "pending":
+            # determinar stage activo: el primer pending en orden
+            pass
+        out.append({"id": aid, "nombre": nombre, "estado": estado_ag,
+                    "en_curso": en_curso, "ultima": {"ok": val in ("done", "gate_pass"),
+                    "perdido": False, "d": str(val)}})
+    # marcar el stage activo (primer pending) como trabajando si la fábrica corre
+    if corriendo:
+        orden = ["research", "guion", "visuales", "narracion", "montaje", "publicacion"]
+        stage_map = {"research": "research", "guion": "guion", "visuales": "visuales",
+                     "narracion": "narracion", "montaje": "montaje", "publicacion": "publicacion"}
+        activo = None
+        for aid, nombre, sk in agentes_def:
+            if stages.get(sk, "pending") not in ("done", "gate_pass"):
+                activo = aid; break
+        if activo:
+            for a in out:
+                if a["id"] == activo:
+                    a["estado"] = "curso"; a["en_curso"] = True
+    return web.json_response({"agentes": out})
 
 async def api_metricas(req: web.Request) -> web.Response:
     return web.json_response(_leer_metricas())
@@ -989,6 +1078,7 @@ def armar_app() -> web.Application:
     r.add_post("/api/control", api_control)
     r.add_get("/api/health", api_health)
     r.add_get("/api/metricas", api_metricas)
+    r.add_get("/api/oficina", api_oficina)
     r.add_get("/api/conectores", api_conectores)
     r.add_post("/api/conectores/probar", api_conectores_probar)
     r.add_post("/api/conectores/agregar", api_conectores_agregar)

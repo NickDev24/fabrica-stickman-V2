@@ -1,0 +1,191 @@
+{
+  "template_name": "stickman_8_10min_v2",
+  "fuente_de_verdad": "Los tiempos mandan. Las palabras se DERIVAN: palabras = segundos x 2.668 (ritmo EFECTIVO de la voz canónica, ya descontada la pausa entre párrafos). Nadie edita a mano un rango de palabras.",
+  "palabras_por_segundo": 2.668,
+  "target_duration_s": [
+    500,
+    600
+  ],
+  "target_words": [
+    1340,
+    1600
+  ],
+  "regla_derivacion": "words_nominal = round((time_end_s - time_start_s) * 2.668); words_target = ±10%",
+  "bloques": [
+    {
+      "block_id": "hook",
+      "order": 1,
+      "time_start_s": 0,
+      "time_end_s": 15,
+      "words_nominal": 40,
+      "words_target": [
+        36,
+        44
+      ],
+      "latido": "LATIDO 1 GANCHO DORADO",
+      "function": "brecha_curiosidad",
+      "required": [
+        "pregunta_dorada",
+        "promesa_concreta"
+      ],
+      "check": [
+        "primera_oracion_es_pregunta",
+        "6_12_palabras_objetivo_4_16_tolerancia",
+        "sin_fecha_inicial",
+        "no_sabias_que",
+        "no_resuelve_la_pregunta"
+      ],
+      "anti_pattern": "arrancar con contexto, fecha o saludo"
+    },
+    {
+      "block_id": "planteamiento",
+      "order": 2,
+      "time_start_s": 15,
+      "time_end_s": 60,
+      "words_nominal": 120,
+      "words_target": [
+        108,
+        132
+      ],
+      "latido": "LATIDO 2 QUIEBRE DE LA ASUNCIÓN",
+      "function": "stakes_protagonista",
+      "required": [
+        "protagonista_stickman",
+        "situacion_inicial",
+        "ruptura_equilibrio",
+        "asuncion_del_espectador_rota"
+      ],
+      "check": [
+        "hay_algo_en_juego",
+        "quiebrote_dentro_de_las_3_primeras_frases_post_gancho"
+      ],
+      "nota": "La fecha/contexto SI puede aparecer acá, nunca antes."
+    },
+    {
+      "block_id": "exploracion",
+      "order": 3,
+      "time_start_s": 60,
+      "time_end_s": 330,
+      "words_nominal": 720,
+      "words_target": [
+        648,
+        792
+      ],
+      "latido": "LATIDO 3 AL DESCUBRIMIENTO",
+      "function": "viaje_con_bucles",
+      "required": [
+        "bucle_1",
+        "bucle_2",
+        "bucle_3",
+        "bucle_4"
+      ],
+      "micro_hooks": {
+        "interval_s": [
+          45,
+          90
+        ],
+        "count_min": 3,
+        "count_objetivo": "4-6 bucles en este bloque (6-8 en el episodio completo)"
+      },
+      "check": [
+        "bucle_cada_45_90s",
+        "cierra_y_encadena",
+        "cada_bucle_entrega_UN_dato_nuevo",
+        "micro_cliffhanger_al_cerrar_cada_bucle"
+      ],
+      "anti_pattern": "enumeración plana 'dato 1, dato 2'"
+    },
+    {
+      "block_id": "inflexion",
+      "order": 4,
+      "time_start_s": 330,
+      "time_end_s": 450,
+      "words_nominal": 320,
+      "words_target": [
+        288,
+        352
+      ],
+      "latido": "LATIDO 4 LA VERDAD FINA",
+      "function": "climax_revelacion",
+      "required": [
+        "punto_mas_bajo",
+        "revelacion_principal_sin_atajos"
+      ],
+      "check": [
+        "la_revelacion_responde_LA_pregunta_del_hook",
+        "hay_transformacion_el_protagonista_entiende_algo_nuevo"
+      ]
+    },
+    {
+      "block_id": "giro_practico",
+      "order": 5,
+      "time_start_s": 450,
+      "time_end_s": 540,
+      "words_nominal": 240,
+      "words_target": [
+        216,
+        264
+      ],
+      "latido": "LATIDO 5 ELEVACIÓN (mitad 1)",
+      "function": "conexion_espectador",
+      "required": [
+        "aplicable_a_vida_del_espectador_hoy"
+      ],
+      "check": [
+        "consejo_advertencia_o_reflexion",
+        "deriva_de_la_historia_no_es_añadido"
+      ]
+    },
+    {
+      "block_id": "cierre",
+      "order": 6,
+      "time_start_s": 540,
+      "time_end_s": 600,
+      "words_nominal": 160,
+      "words_target": [
+        144,
+        176
+      ],
+      "latido": "LATIDO 5 DEBATE (mitad 2)",
+      "function": "cierre_memorable",
+      "required": [
+        "frase_de_impresion_duradera",
+        "pregunta_abierta_de_debate"
+      ],
+      "check": [
+        "no_cierre_seco",
+        "cta_sutil_o_ninguno",
+        "eco_del_hook_sin_repetirlo_literal"
+      ]
+    }
+  ],
+  "validation_rules": {
+    "enforce_history_over_list": true,
+    "require_protagonist": true,
+    "require_curiosity_loops": true,
+    "require_word_count_gate": {
+      "min": 1300,
+      "max": 1600,
+      "accion_fallo": "NO pasar a narración. Extender en el bloque más corto vs su words_target, no en el primero que sigue."
+    },
+    "require_duration_gate": {
+      "min_s": 500,
+      "max_s": 600,
+      "medicion": "metadata.narration_duration_s (audio real, noestimación de palabras)",
+      "accion_fallo": "re-escritura dirigida al bloque con mayor déficit"
+    }
+  },
+  "wiring": {
+    "estado_actual": "NINGÚN código lee este archivo. pipeline/stages/guion.py:168 pide '500-700 palabras' hardcodeado; los episodios reales tienen 312 y 388 palabras (116.9s y 147.4s de audio).",
+    "punto_de_carga": "pipeline/stages/guion.py -> reemplazar el literal '(4) formato: 500-700 palabras...' del prompt por la lectura de target_words; agregar gate de word_count antes de ep.write_text('script.txt').",
+    "gate_existente_reutilizable": "pipeline/gates.py: gate_anti_duplicado / gate_fidelidad ya corren; agregar gate_extension(script, template) en la misma cadena (guion.py:180-221).",
+    "no_romper": "tests/test_hook.py valida 4-16 palabras (guion.py:77). No bajar el máximo del gate a 14: alinea el prompt a 6-12 objetivo y deja el gate como tolerancia."
+  },
+  "derivacion_de_la_paz": {
+    "voz_palabras_por_segundo": 2.834,
+    "pausa_entre_parrafos_s": 0.65,
+    "palabras_por_parrafo_medidas": 29.6,
+    "formula": "pps_efectivo = 1 / (1/2.834 + 0.65/29.6) = 2.668: al ritmo real del motor hay que descontarle el aire entre párrafos, que también consume reloj",
+    "medido": "2026-11-05 sobre el episodio real pre-insight-3anos (314 palabras, 7 párrafos) con edge-tts es-AR-TomasNeural a --rate=+0% --pitch=-2Hz: 110,43 s de voz = 2,834 pal/s. Por párrafo varió entre 2,59 y 3,49 pal/s, y ésa es la tolerancia del gate de ritmo (±30%), no un capricho. Una muestra corta de 44 palabras había dado 2,36: el ritmo depende del texto, así que se usa un episodio completo como calibración."
+  }
+}

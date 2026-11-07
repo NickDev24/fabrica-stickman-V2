@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from factory import parametros
+
 ROOT = Path(__file__).resolve().parent.parent
 PROJECTS = ROOT / "projects"
 REGISTRY = ROOT / "registry"
@@ -13,11 +15,15 @@ FFMPEG_CRF = int(os.environ.get("FFMPEG_CRF", "23"))
 
 # Piper reemplazó a VibeVoice como motor de narración (medido: 22,5 s para 45 s de audio).
 PIPER_BIN = Path.home() / "piper-env" / "bin" / "piper"
-# Voz CapCut-like (Microsoft neural): elegida por el dueño 2026-11-04 para todos los
-# capítulos; la voz por defecto ahora es edge-tts:es-AR-TomasNeural (allowlist-eada).
+# Voz CapCut-like (Microsoft neural): la canónica la declara factory/audio/voice_config.json.
+# Antes estaba hardcodeado acá, así que cambiar de voz implicaba editar código; ahora el env
+# sigue mandando y, si no hay env, manda el config (única fuente del número).
+_CANONICA = parametros.voz_canonica()
+_ENGINE, _, _VOICE_REF = _CANONICA.partition(":")
 EDGE_TTS_BIN = Path(os.environ.get("EDGE_TTS_BIN", str(Path.home() / ".local" / "bin" / "edge-tts")))
-EDGE_TTS_VOICE = os.environ.get("EDGE_TTS_VOICE", "es-AR-TomasNeural")
-VOZ_PREFERIDA = os.environ.get("VOZ_PREFERIDA", f"edge-tts:{EDGE_TTS_VOICE}")
+EDGE_TTS_VOICE = os.environ.get("EDGE_TTS_VOICE",
+                                _VOICE_REF if _ENGINE == "edge-tts" else "es-AR-TomasNeural")
+VOZ_PREFERIDA = os.environ.get("VOZ_PREFERIDA", _CANONICA)
 # Voz argentina de alta calidad para la narración (decisión del dueño, 2026-11-04).
 # Costo medido en el B950: 6,5x tiempo real (65 s de audio ≈ 7-8 min de síntesis).
 # La x_low queda como fallback rápido vía PIPER_MODEL_NAME en .env.
@@ -42,7 +48,6 @@ AUSENCIA_MAX_S = 3.5
 # El Short va igual de natural que el documental; subir el ritmo de Daniela la hace apurada.
 PIPER_LENGTH_SCALE_SHORT = float(os.environ.get("PIPER_LENGTH_SCALE_SHORT", "1.0"))
 
-EDGE_TTS_VOICE = "es-AR-TomasNeural"
 
 # Gate 2: única voz permitida = narradora propia del canal. Nada de clonación.
 VOICE_ALLOWLIST = {
@@ -158,20 +163,56 @@ def cloudflare_cfg() -> dict:
 
 
 # Reparto por tarea: verificación con un proveedor INDEPENDIENTE del que escribió (misión §3).
+# La ruta es la única fuente de orden; las banderas de entorno sólo DECIDEN SI UN NOMBRE
+# DEL LISTADO EXISTE (ver llm._habilitado): sin ALLOW_REMOTE_LLM los de nube se descartan
+# y queda el local; Gemini sólo aparece si ALLOW_PAID_LLM=1 y la tarea es premium.
 TASK_ROUTES = {
-    # ollama primero siempre (gratis e ilimitado); gemini cierra cada ruta (pago, con tope)
-    "default": ["ollama"],
-    "investigacion": ["ollama"],
-    "guion": ["ollama"],
-    "verificacion": ["ollama"],
-    "direccion": ["ollama"],
-    "prompts_visuales": ["ollama"],
-    "evaluacion": ["ollama"],
+    "default": ["bedrock", "ollama"],
+    "investigacion": ["bedrock", "ollama"],
+    # gpt-oss-120b (Bedrock, reasoning low, medido 1,3 s) respeta el tope de palabras:
+    # llama-3.1-8b entregaba 2.000+ palabras en los 3 intentos de recorte y bloqueaba
+    # toda la producción por gate de extensión (medido 2026-11-05, corrida red-proxy).
+    "guion": ["bedrock", "cloudflare", "ollama"],
+    # el que escribió el guion no puede ser el que lo valida
+    "verificacion": ["bedrock", "ollama"],
+    "direccion": ["bedrock", "ollama"],
+    "prompts_visuales": ["bedrock", "ollama"],
+    "evaluacion": ["bedrock", "ollama"],
 }
+
+# Cada etapa se identifica con un `tag` (es lo que llega a llm.chat en la práctica). Esta
+# tabla lo traduce a la tarea de TASK_ROUTES; sin ella TODAS las llamadas caían en
+# "default" y el opt-in ALLOW_PAID_LLM=1 mandaba los 91 calls baratos de una corrida a
+# Gemini, que fue exactamente como se agotaron los 6 USD del mes el 2026-11-05.
+TAREA_POR_TAG = {
+    "queries": "investigacion", "research": "investigacion", "idea": "investigacion",
+    "factcheck": "verificacion", "fidelidad": "verificacion",
+    "angulos": "guion", "guion": "guion", "guion-1": "guion", "guion-2": "guion",
+    "guion-fix": "guion", "guion-ext": "guion", "hook-fix": "guion",
+    "titulo-fix": "guion", "articulo": "guion",
+    "cutout-propuesta": "prompts_visuales", "visuales-kw": "prompts_visuales",
+    "actuacion": "direccion",
+}
+
+# Sólo el guion justificaría gastar: es lo que se escucha. Verificación queda afuera a
+# propósito (misión §3) — si el que escribe y el que valida fueran el mismo Gemini pago,
+# el gate 1 dejaría de ser independiente.
+TAREAS_PREMIUM = {"guion"}
+
+# Bandera que le da vida a cada proveedor opt-in. Los que no están acá (ollama, y
+# cualquier ruta de prueba) no necesitan permiso: son locales o ya están declarados.
+HABILITADOR = {"mistral": "ALLOW_REMOTE_LLM", "qwen": "ALLOW_REMOTE_LLM",
+               "cloudflare": "ALLOW_REMOTE_LLM", "aionlabs": "ALLOW_AIONLABS",
+               "bedrock": "ALLOW_PAID_LLM", "gemini": "ALLOW_PAID_LLM"}
+
+
+def tarea_para_tag(tag: str) -> str:
+    base = (tag or "").split("-")[0]
+    return TAREA_POR_TAG.get(tag) or TAREA_POR_TAG.get(base) or "default"
 
 LLM_CACHE_DIR = STATE / "llm_cache"
 LLM_CACHE_TTL_H = 24.0
-LLM_TIMEOUT_S = 120
+LLM_TIMEOUT_S = int(os.environ.get("LLM_TIMEOUT_S", "300"))
 # El modelo local corre en 2 núcleos: un timeout corto lo aborta a mitad de una respuesta
 # válida y uno de 10 min congela la fábrica. 240 s es el techo operativo; se puede bajar
 # con LLM_LOCAL_TIMEOUT_S si el equipo es más lento o se usa un modelo más grande.

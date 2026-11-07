@@ -1,0 +1,132 @@
+{
+  "name": "stickman_editing_v2",
+  "gap_critico_de_formato": {
+    "problema": "Todo se renderiza vertical 720x1280 (pipeline/config.py VIDEO_W/VIDEO_H, keyframes.py:35). Un episodio de 8-10 minutos en YouTube se consume en horizontal: sin una ruta 16:9 no hay ni miniatura nativa (1280x720) ni player completo. Los 1280x720 que promete packaging/thumbnail_rules.json v1 nunca se produjeron.",
+    "regla": "EPISODIO largo = 16:9 (1920x1080) con el stickman en el tercio izquierdo y el dato/metáfora a la derecha. SHORT/REEL = 9:16 (1080x1920). La misma historia, dos composiciones, no una escala.",
+    "punto_de_carga": "pipeline/config.py (VIDEO_W/H/FPS) y pipeline/stages/keyframes.py:35,38,39 (canvas y resolución interna); keyframes.py:_qc compara contra W,H, así que el gate se adapta solo si se parametriza.",
+    "estado": "PARCIALMENTE CERRADO v6: la miniatura 1280x720 ya se produce (captacion.py:_dibujar_portada); el máster horizontal queda abierto con decisión explícita arriba."
+  },
+  "rhythm": {
+    "cambio_de_plano_cada_s": [
+      3.5,
+      5.5
+    ],
+    "cambio_de_plano_short_cada_s": [
+      1.6,
+      2.8
+    ],
+    "cortes_por_minuto_episodio": [
+      11,
+      17
+    ],
+    "cut_on_action": true,
+    "evitar": [
+      "dos beats consecutivos con el mismo movimiento de cámara",
+      "plano fijo sostenido",
+      "escala del mismo still más de 5 s"
+    ],
+    "regla_de_los_30_primeros_segundos": "los primeros 30 s llevan el doble de cortes que el promedio del video (≈6-8 planos): es el tramo donde se decide la retención y hoy no hay ninguna regla de edición que lo fuerce"
+  },
+  "transiciones": {
+    "default": "hard_cut",
+    "permitidas": [
+      "hard_cut",
+      "match_cut_sobre_forma (el círculo del dato pasa al círculo de la escena)",
+      "corte_en_el_golpe_del_SFX"
+    ],
+    "prohibidas": [
+      "fade_a_negro",
+      "dissolve_largo",
+      "zoom_wipe",
+      "transiciones_de_diapositivas"
+    ],
+    "unica_excepcion_de_aire": "0.3 s de corte a negro SOLO entre bloques narrativos (6 bloques = máximo 5)"
+  },
+  "musica": {
+    "por_nicho": {
+      "finanzas": "tense minimal ambient",
+      "historia": "cinematic sutil, sin percusión épica al inicio",
+      "vida_silvestre": "ambient natural",
+      "mascotas": "warm light",
+      "salud_fitness": "motivacional sutil"
+    },
+    "nivel": "VO -3 dB sobre la música; música entre -24 y -18 LUFS relativo",
+    "ducking": {
+      "activo": true,
+      "ataque_ms": 40,
+      "release_ms": 300,
+      "duck_under_vo": true
+    },
+    "reglas": [
+      "sin letra vocal",
+      "un solo tema por episodio, que sube de intensidad en la inflexión",
+      "cortar la música en seco 0.5 s antes de la revelación y que vuelva después: el silencio es el golpe",
+      "loop safe (sin corte audible al repetir)"
+    ]
+  },
+  "sfx": {
+    "por_metafora": {
+      "mochila_pesada": "impacto_grave_sutil on_action",
+      "escalera_empinada": "pasos on_action",
+      "pared_que_se_quiebra": "craqueo + impacto seco",
+      "cortina_que_se_corre": "whoosh sutil on_reveal",
+      "reloj": "tic moderado sólo bajo tensión"
+    },
+    "reglas": [
+      "nunca sobre la voz",
+      "no más de 1 SFX cada 2 beats",
+      "ninguno en el hook más que el golpe del flash-forward",
+      "sin SFX cómicos de slapstick: el formato es curiosidad, no gag"
+    ],
+    "estado_real": "se generan sfx-*.wav por beat (projects/*/assets/audio/sfx, ~34 archivos en pre-insight-3anos). Falta la regla de DOSIS: hoy no hay tope medido."
+  },
+  "texto_en_pantalla": {
+    "subtitulos": "desactivados: ningún subtítulo se incrusta en los renders de la fábrica",
+    "pop_de_palabra_clave": {
+      "estado_actual": "desactivado; el render final se entrega sin texto sincronizado",
+      "accion": "reactivar",
+      "palabras_max": 2,
+      "caracteres_max": 14,
+      "duracion_s": [
+        0.6,
+        1.2
+      ],
+      "cobertura": "al menos 35% de los beats del episodio",
+      "sincronia": "el POP coincide con la sílaba tónica de la palabra clave, no con el inicio del beat"
+    },
+    "cartelas_de_dato": {
+      "uso": "cifra o año que el guion menciona, en pantalla mientras se pronuncia",
+      "max_simultaneas": 1
+    },
+    "prohibido": [
+      "subtítulos de todo el guion como cebra visual",
+      "marca de agua visible",
+      "más de 8 palabras en pantalla a la vez"
+    ]
+  },
+  "gancho_visual_0_3s": {
+    "estado_real": "existe y funciona: factory/acting/beats.py:356-399 fijar_gancho_visual fuerza el beat 0 a heredar la escena más intensa del resto del video, con flash-forward, primer plano y shake.",
+    "ampliacion": "aplicar la misma lógica en el corte final: los primeros 3 s deben llevar el flash-forward CON el POP de la palabra clave y la música cortada, no sólo la imagen."
+  },
+  "wiring": {
+    "estado_actual": "configuración documental; el render de producción no quema subtítulos",
+    "punto_de_carga_1": "pipeline/stages/keyframes.py: cámara y montaje sin subtítulos; pipeline/stages/montaje.py no incorpora texto narrado",
+    "punto_de_carga_2": "pipeline/config.py para el 16:9 del episodio",
+    "punto_de_carga_3": "factory/motor/gestor_audio.py y pipeline/stages/keyframes.py:314 para niveles/ducking/LUFS"
+  },
+  "decision_de_formato_2026_11_05": {
+    "decision": "el máster sigue 9:16 (720x1280) hasta tener datos propios; lo que SÍ se produjo ahora es el empaque 16:9 (derivados/portada-yt.jpg 1280x720), que era el hueco real",
+    "por_que": [
+      "el máster conserva 9:16; el render de producción ya no incrusta subtítulos",
+      "el costo de render es idéntico (720x1280 y 1280x720 son los mismos 921.600 px), así que el cambio es de composición y de prompts de imagen, no de presupuesto",
+      "sin métricas propias (fábrica no tiene ingestion todavía) no hay evidencia para elegir composición; el brief tampoco la aporta"
+    ],
+    "gatillo_para_reabrir": "cuando metricas.jsonl tenga >=10 episodios: si el retención 30-60 s del capítulo largo no para de caer contra la mediana del canal Y el CTR se mide con portada 16:9, se abre la ruta 16:9 como corrida separada (10 líneas de canvas + re-tune de ASS + re-render de los prompts en horizontal)",
+    "migracion": [
+      "1) parametrizar W,H,BASE_W,BASE_H y el aspect de _recorte desde config (MASTER_ASPECT=16:9|9:16)",
+      "2) re-tune de ASS: MarginV y fontsize proporcionales a H (hoy son absolutos)",
+      "3) los derivados verticales (Short/Reel) se recortan desde la IMAGEN del beat, no desde el máster, para no upscalear 3,2x",
+      "4) QC: _qc compara contra (W,H), así que el gate se adapta solo"
+    ]
+  }
+}

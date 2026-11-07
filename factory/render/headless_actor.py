@@ -16,11 +16,13 @@ Reglas de actuación:
 - Gestos: manos y brazos en movimiento (señal, informar, celebrar...) según la partitura.
 - Cámara: zoom narrativo y movimiento lateral suave según la intensidad emocional.
 - Párpados: parpadeo natural; pupilas mueven al mirar.
-- Respiración: sutil pulso de pecho (0.3 Hz con variación) y subtítulos de voz.
+- Respiración: sutil pulso de pecho (0.3 Hz con variación); sin subtítulos incrustados.
 
 Salida: frames PNG en state/renders/frames/(franja)/.
 """
 from __future__ import annotations
+import json
+import os
 import sys
 from pathlib import Path
 

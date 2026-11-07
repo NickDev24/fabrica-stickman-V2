@@ -1,0 +1,97 @@
+{
+  "name": "stickman_packaging_v2",
+  "resumen": "Fusiona title_rules.json y thumbnail_rules.json: título y miniatura se diseñan JUNTOS porque el CTR es la combinación, no dos artefactos separados que nunca se comparan.",
+  "estado_real": {
+    "titulos": "corregido v6: gates.gate_titulo se corre en guion.asegurar_titulo (reescribe con el LLM y persiste en episode.json) y vuelve a bloquear en publicacion.checklist y _plan_publicacion. La ventana de caracteres la lee el código desde este archivo (parametros.rango_titulo).",
+    "miniatura": "captacion.py:_portada_scroll dibuja ahora TRES salidas desde el beat del clímax: portada.jpg 1080x1920 (reel/pausa), portada-yt.jpg 1280x720 (miniatura del video largo, antes inexistente) y portada-fb.jpg 1080x1350. El overlay sigue siendo la pregunta gancho de ≤6 palabras.",
+    "evidencia": "no hay ningún portada.jpg en projects/, y el flag PORTADA_LLM está apagado por default (captacion.py:178, usa la imagen ya generada: costo cero)."
+  },
+  "regla_de_oro": "título abre la pregunta, miniatura muestra el conflicto. Nunca se repiten las mismas palabras: si el overlay duplica el título, se descarta.",
+  "titulo": {
+    "youtube": {
+      "caracteres": [
+        45,
+        65
+      ],
+      "duros_max": 70,
+      "palabras": [
+        6,
+        12
+      ],
+      "estructura": "sujeto concreto + promesa de revelación, en abierto",
+      "formula_1": "Este stickman [hizo algo razonable] y [terminó en algo inesperado]",
+      "formula_2": "El error que [consecuencia grande] y nadie explica",
+      "formula_3": "Por qué [cosa cotidiana] [efecto contraintuitivo]",
+      "formula_4": "La [recurso] que [actor] escondió durante [tiempo]",
+      "prohibido": [
+        "TOP 10",
+        "5 COSAS",
+        "INCREÍBLE",
+        "SHOCKING",
+        "¿Sabías que...?",
+        "adjetivos sin sustento",
+        "prometer un dato que el video no muestra",
+        "spoiler de la revelación"
+      ],
+      "validacion_ejecutable": "gate_titulo(): 45<=len<=70, no coincide con regex de prohibidos, tiene al menos 1 sustantivo concreto del guion, y 0 palabras compartidas con el overlay de la miniatura"
+    },
+    "facebook": {
+      "caracteres_max": 40,
+      "razon": "el feed corta la primera línea antes; el gancho tiene que vivir en los primeros 40 caracteres",
+      "regla": "primera línea = pregunta o conflicto explícito, segunda línea el contexto",
+      "nota": "SUPUESTO: el umbral de 40 caracteres no está medido en este canal; validar con las primeras 20 publicaciones propias antes de fijarlo como verdad."
+    }
+  },
+  "miniatura": {
+    "youtube": {
+      "formato": "1280x720 (16:9)",
+      "estado": "NO EXISTE en la fábrica; hay que crear la ruta",
+      "composicion": "stickman en el tercio izquierdo, objeto-metafórico que lo aplasta o lo espera a la derecha, alto contraste, aire arriba para el texto",
+      "texto": {
+        "palabras_max": 6,
+        "caracteres_max": 22,
+        "tipografia": "bold sans, borde duro, legible a 320 px",
+        "posicion": "arriba o abajo, nunca sobre la figura"
+      },
+      "reglas": [
+        "plantea el problema, nunca la solución",
+        "una sola idea visual",
+        "conflicto o desequilibrio (el stickman a punto de, frente a, contra)",
+        "no mostrar el dato revelado",
+        "leibilidad verificada a 320 px de ancho"
+      ]
+    },
+    "facebook": {
+      "formato": "1080x1350 (4:5) o primer frame del reel",
+      "regla": "autoplay con sonido apagado: el conflicto debe leerse en el primer frame sin audio, por eso el flash-forward del beat 0 se usa como frame 0 del video",
+      "texto": {
+        "palabras_max": 4,
+        "razon": "menos tiempo de lectura antes del scroll"
+      }
+    },
+    "prohibido": [
+      "caritas fotorrealistas",
+      "lista numérica grande",
+      "más de 3 elementos en cuadro",
+      "clickbait que el video no cobra",
+      "marca de agua"
+    ]
+  },
+  "par_fuente_verificable": {
+    "prueba": "tapar el título y mirar sólo la miniatura: ¿se puede adivinar la pregunta? Si la respuesta es la misma que con el título, no hay curiosidad sumada."
+  },
+  "wiring": {
+    "estado_actual": "cero lectores en Python (title_rules.json / thumbnail_rules.json).",
+    "punto_de_carga_1": "pipeline/ideas.py:42-64 -> prompt de título desde formulas_by_nicho; agregar gate_titulo() en pipeline/gates.py y correrlo antes de crear el episode",
+    "punto_de_carga_2": "pipeline/stages/captacion.py:146-225 -> límites de 'miniatura.youtube.texto' y generación del 16:9 (hoy fija 1080x1920 en la línea 219)",
+    "punto_de_carga_3": "pipeline/stages/publicacion.py:51-53 -> separar titulo_youtube / titulo_facebook en el paquete que se envía",
+    "descartes": "pipeline/stories.py (estimate_ctr/estimate_retention heurísticos) no se importa nunca: no usarlo como métrica, finge medir",
+    "gate": "pipeline/gates.py:gate_titulo",
+    "donde_se_corre": [
+      "pipeline/stages/guion.py:asegurar_titulo (antes del render)",
+      "pipeline/stages/publicacion.py:checklist",
+      "pipeline/stages/publicacion.py:_plan_publicacion"
+    ],
+    "prueba": "tests/test_empaquetado.py"
+  }
+}

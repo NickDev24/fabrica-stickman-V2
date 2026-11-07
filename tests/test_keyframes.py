@@ -132,3 +132,67 @@ def test_huella_de_imagen_no_congela_prompts_distintos(tmp_path, monkeypatch):
     # flux no acepta parámetros: lo que no se manda no puede formar parte de la clave
     assert imagen.huella("dreamshaper", "uno", 1024, 576, 5, 8) != \
            imagen.huella("dreamshaper", "uno", 1024, 576, 7, 8)
+
+
+# ------------------------------------------------------------------ micro-movimiento
+def _fuente(tmp_path: Path) -> Path:
+    """Foto fija con detalle vertical: sin detalle la deriva de 8 px no se vería."""
+    img = tmp_path / "kf.png"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                    "-i", "testsrc=size=1024x1024:rate=1:duration=1",
+                    "-frames:v", "1", str(img)], check=True)
+    return img
+
+
+@pytest.mark.parametrize("mov", sorted(K.CAMARA))
+def test_ningun_plano_es_un_frame_muerto(tmp_path, mov):
+    """El defecto structural de v5: cámara sobre foto fija y cuadro igualmente quieto.
+
+    Medido: un plano estático codificado da 100% de cuadros bajo el umbral de YDIF; con la
+    respiración cableada, el mismo plano (mov "fijo") baja a 16%.
+    """
+    out = tmp_path / f"pl-{mov}.mp4"
+    K._plano({"dur_s": 2.0, "mov": mov, "i": 3, "fx": []}, _fuente(tmp_path), out)
+    assert K._frames_muertos(out) < K.QC_PROPORCION_MUERTA, f"el plano '{mov}' está quieto"
+
+
+def test_la_foto_pegada_si_la_barrera_apesta(tmp_path):
+    """La barrera no puede ser decorativa: tiene que atrapar el plano que sí está muerto."""
+    estatico = tmp_path / "estatico.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", str(_fuente(tmp_path)),
+                    "-t", "2", "-vf", f"scale={K.W}:{K.H},fps={K.KF_FPS}",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-an", str(estatico)], check=True)
+    assert K._frames_muertos(estatico) == 1.0
+
+
+def test_la_respiracion_no_late_al_unison(tmp_path):
+    """Dos planos consecutivos con la misma fase se leen como temblor de cámara, no como vida."""
+    fases = {K._deriva(i) for i in range(5)}
+    assert len(fases) == 5
+
+
+def test_el_master_sale_en_la_resolution_del_contrato(tmp_path):
+    """El recorte oscilante renderiza con holgura y vuelve a WxH: si no, todo el pipeline se desalinea."""
+    out = tmp_path / "pl.mp4"
+    K._plano({"dur_s": 2.0, "mov": "fijo", "i": 0, "fx": []}, _fuente(tmp_path), out)
+    v = next(s for s in json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(out)],
+        capture_output=True, text=True).stdout)["streams"] if s["codec_type"] == "video")
+    assert (v["width"], v["height"]) == (K.W, K.H)
+
+
+def test_los_numeros_de_camara_viven_en_la_config():
+    """El JSON y el dict de FFmpeg no pueden ir cada uno por su lado (así nacieron los docs muertos)."""
+    from factory import parametros
+    assert sorted(parametros.camara_movs()) == sorted(K.CAMARA)
+    assert K.RESPIRACION_PX == parametros.motion()["micro_movement"]["respiracion"]["desplazamiento_px"]
+
+
+def test_el_piso_de_zoom_deja_holgura_para_oscilar():
+    """Con zoom 1,00 el recorte no tiene dónde moverse y la deriva se clampa a 0."""
+    from factory import parametros
+    piso = float(parametros.motion()["camara"]["piso_zoom"])
+    assert piso > 1.0
+    holgura_s = K.H * (1 - 1 / piso) / 2
+    assert holgura_s >= K.RESPIRACION_PX, f"holgura {holgura_s:.1f}px < deriva {K.RESPIRACION_PX}px"

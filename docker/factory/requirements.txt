@@ -1,0 +1,47 @@
+# Pila exacta del .venv del host (pip freeze 2026-11-06, Python 3.13) minus pytest y
+# minus opencv-python con GUI (la headless cubre cv2 sin libGL). Añadidos para factoryd:
+# aiohttp (Apache-2.0, REST+WS) y psutil (BSD-3, métricas del contenedor).
+anyio==4.16.0
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cssselect==1.6.0
+curl_cffi==0.17.0
+filelock==4.2.9
+flatbuffers==25.12.19
+fsspec==2026.9.0
+gradio_client==2.7.2
+h11==0.16.0
+hf-xet==1.8.0
+httpcore==1.0.9
+huggingface_hub==2.4.0
+idna==3.20
+iniconfig==2.3.1
+lxml==6.1.3
+numpy==2.5.4
+onnxruntime==1.31.1
+opencv-python-headless==5.0.0.93
+orjson==3.13.0
+packaging==26.3
+pillow==13.0.0
+pluggy==1.7.0
+protobuf==7.36.2
+pyclipper==1.4.0
+pycparser==3.12
+Pygments==2.21.0
+pytesseract==0.3.13
+PyYAML==6.0.3
+rapidocr-onnxruntime==1.2.3
+requests==2.34.2
+scrapling==0.5
+shapely==2.2.0
+six==1.17.0
+tld==0.13.2
+tqdm==4.70.1
+truststore==0.10.5
+typing_extensions==4.16.0
+urllib3==2.8.0
+w3lib==2.5.0
+aiohttp>=3.11,<4
+psutil>=6.0,<8

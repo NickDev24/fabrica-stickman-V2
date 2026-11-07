@@ -82,12 +82,22 @@ function cambiarVista(v) {
   history.replaceState(null, "", `#${v}`);
   window.scrollTo({ top: 0 });
   pintar();
+  if (v === "oficina3d") montarOficina3D();
+  if (v === "oficina3d" && !window._of3dPoll) {
+    window._of3dPoll = setInterval(async () => {
+      if (S.vista !== "oficina3d") { clearInterval(window._of3dPoll); window._of3dPoll = null; return; }
+      try {
+        const ofi = await GET("/api/oficina");
+        if (_of3dModulo && _of3dMontado) _of3dModulo.actualizar({ agentes: ofi.agentes || [], bloqueos_humanos: {} });
+      } catch {}
+    }, 5000);
+  }
 }
 async function init() {
   $$(".rail-item").forEach((b) => b.onclick = () => cambiarVista(b.dataset.vista));
   const quiet = new URLSearchParams(location.search).has("quiet");
   const h = location.hash.slice(1);
-  if (["inicio", "video", "comics", "metricas", "conectores", "agentes", "transmision"].includes(h)) {
+  if (["inicio", "video", "comics", "metricas", "conectores", "agentes", "oficina3d", "transmision"].includes(h)) {
     cambiarVista(h);
   }
   $("#btn-rail").onclick = () => $("#rail").classList.toggle("abierto");
@@ -559,9 +569,9 @@ function prensaApagar() {
 /* ═══════════════════════════════════════════════════════════════════════
    GRÁFICOS CANVAS (sin dependencias externas)
    ═══════════════════════════════════════════════════════════════════════ */
-function _cx(id) { return $(id).getContext("2d"); }
+function _cx(id) { return document.getElementById(id).getContext("2d"); }
 function _preparar(id) {
-  const cn = $(id); const x = _cx(id);
+  const cn = document.getElementById(id); const x = _cx(id);
   const dpr = window.devicePixelRatio || 1;
   const w = cn.clientWidth || 300; const h = cn.clientHeight || 150;
   cn.width = w * dpr; cn.height = h * dpr; x.scale(dpr, dpr);
@@ -645,7 +655,6 @@ function dibujarBarras(id, items, opts = {}) {
 
 /* ─────────────────────── métricas (YT + FB) ──────────────────────────── */
 function pintarMetricasView() {
-  pintarMetricaGeneral();
   const m = S.metricas || {};
   const dispo = !!m.disponible;
 
@@ -1004,3 +1013,38 @@ function lbPintar(idx) {
 function lbCerrar() { $("#lightbox").hidden = true; $("#lb-stage").innerHTML = ""; }
 
 init().catch((e) => console.error(e));
+
+
+/* ─────────────────────────── Oficina 3D ───────────────────────── */
+let _of3dModulo = null, _of3dMontado = false, _of3dMontando = null;
+async function montarOficina3D() {
+  const caja = document.getElementById("of3D");
+  if (!caja) return;
+  if (_of3dMontado) return;
+  if (_of3dMontando) { _of3dMontando.then(() => montarOficina3D()); return; }
+  const aviso = caja.querySelector(".of-3d-aviso");
+  if (aviso) aviso.textContent = "Leyendo la oficina…";
+  try {
+    if (!_of3dModulo) {
+      const url = "/js/oficina3d.js?v=" + Date.now();
+      _of3dModulo = await import(url);
+    }
+    const m = _of3dModulo;
+    const razon = (typeof m.motivo === "function") ? m.motivo() : "";
+    if (razon) throw new Error(razon);
+    // datos: adaptar /api/agentes al formato que espera la escena
+    const ofi = await GET("/api/oficina");
+    const datos = {
+      agentes: (ofi.agentes || []),
+      bloqueos_humanos: {},
+    };
+    if (aviso) aviso.hidden = true;
+    _of3dMontando = m.montar(caja, datos, { onSeleccion: (a) => {} })
+      .then(() => { _of3dMontado = true; _of3dMontando = null; })
+      .catch((e) => { _of3dMontando = null; throw e; });
+    await _of3dMontando;
+  } catch (e) {
+    if (aviso) { aviso.hidden = false; aviso.textContent = "La Oficina 3D no arrancó: " + String((e && e.message) || e).slice(0, 120); }
+    console.error("oficina3d", e);
+  }
+}

@@ -22,63 +22,6 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def _ts(s: float) -> str:
-    h, r = divmod(s, 3600)
-    m, sec = divmod(r, 60)
-    return f"{int(h)}:{int(m):02d}:{sec:05.2f}"
-
-
-ASS_FORMAT = "Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
-
-
-def validar_ass(texto: str, donde: str) -> None:
-    """Cada Dialogue debe traer tantos campos como declara el Format de [Events].
-
-    Si Format enlista menos campos que el diálogo, libass toma el resto de la línea como
-    texto y quema ",0,0,0,,palabra" en pantalla (el bug de pulso-001-main.mp4).
-    """
-    eventos = texto.split("[Events]")[-1]
-    fmt = next((l for l in eventos.splitlines() if l.startswith("Format:")), None)
-    if fmt is None:
-        raise ValueError(f"{donde}: ASS sin Format: en [Events]")
-    n = len(fmt[len("Format:"):].split(","))
-    if n != len(ASS_FORMAT.split(",")):
-        raise ValueError(f"{donde}: Format declara {n} campos, se esperan {ASS_FORMAT.count(',') + 1}")
-    for l in eventos.splitlines():
-        if not l.startswith("Dialogue:"):
-            continue
-        k = len(l[len("Dialogue:"):].split(","))
-        if k < n:
-            raise ValueError(f"{donde}: Dialogue con {k} campos < Format {n}: {l[:60]!r}")
-
-
-def _ass(seg_text: str, dur: float, path: Path) -> Path:
-    """Subtítulos en chunks de ~6 palabras repartidos sobre la duración del segmento."""
-    words = seg_text.split()
-    chunks = [" ".join(words[i:i + 6]) for i in range(0, len(words), 6)] or [""]
-    step = dur / len(chunks)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    events = "\n".join(
-        f"Dialogue: 0,{_ts(i * step)},{_ts((i + 1) * step)},Default,,0,0,0,,{c.replace('{', '').replace('}', '')}"
-        for i, c in enumerate(chunks))
-    texto = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {config.VIDEO_W}
-PlayResY: {config.VIDEO_H}
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginV, Encoding
-Style: Default, DejaVu Sans, 46, &H00FFFFFF, &H00101010, &H80000000, 1, 0, 1, 3, 1, 2, 55, 1
-
-[Events]
-Format: {ASS_FORMAT}
-{events}
-"""
-    validar_ass(texto, str(path))
-    path.write_text(texto, encoding="utf-8")
-    return path
-
-
 def _probe(path: Path) -> dict:
     r = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format",
                         "-of", "json", str(path)], capture_output=True, text=True)
@@ -86,8 +29,6 @@ def _probe(path: Path) -> dict:
 
 
 def _segment_visual(ep: Episode, i: int, dur: float, out: Path, seg_text: str) -> str:
-    sub = _ass(seg_text, dur, ep.dir / "assets" / "sub" / f"seg-{i:03d}.ass")
-    subf = f",subtitles={sub}"
     used = "cartela"
     img = next((p for p in ep.dir.glob(f"assets/img/seg-{i:03d}.*") if p.suffix in (".jpg", ".jpeg", ".png")), None)
     vid = ep.dir / "assets" / "video" / f"seg-{i:03d}.mp4"
@@ -97,18 +38,18 @@ def _segment_visual(ep: Episode, i: int, dur: float, out: Path, seg_text: str) -
     W, H = f"{config.VIDEO_W}", f"{config.VIDEO_H}"
     if vid.exists():
         _run(base + ["-i", str(vid), "-t", f"{dur}",
-                     "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2" + subf] + enc)
+                     "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2"] + enc)
         used = "video"
     elif img:
         frames = int(dur * config.VIDEO_FPS)
         _run(base + ["-loop", "1", "-framerate", str(config.VIDEO_FPS), "-i", str(img), "-t", f"{dur}",
                      "-vf", (f"scale=3200:1800:force_original_aspect_ratio=increase,crop=3200:1800,"
-                             f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:s={W}x{H}:fps={config.VIDEO_FPS}" + subf),
+                             f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:s={W}x{H}:fps={config.VIDEO_FPS}"),
                      ] + enc)
         used = "imagen"
     else:
         _run(base + ["-f", "lavfi", "-i", f"color=c=0x1c222a:s={W}x{H}:r={config.VIDEO_FPS}",
-                     "-t", f"{dur}", "-vf", "format=yuv420p" + subf] + enc)
+                     "-t", f"{dur}", "-vf", "format=yuv420p"] + enc)
     return used
 
 

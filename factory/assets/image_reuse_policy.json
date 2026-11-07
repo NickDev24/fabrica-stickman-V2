@@ -1,0 +1,20 @@
+{
+  "name": "image_reuse_policy_v1",
+  "enabled": true,
+  "intent": "reutilizar_imagenes_ya_generadas_con_consistencia",
+  "matching_criteria": [
+    {"key": "character_id", "weight": 0.4, "required": true},
+    {"key": "style", "weight": 0.2, "required": true},
+    {"key": "environment_type", "weight": 0.15, "required": false},
+    {"key": "props", "weight": 0.15, "required": false},
+    {"key": "lighting", "weight": 0.1, "required": false}
+  ],
+  "rules": [
+    "no_cambiar_personaje_entre_escenas_sin_justificacion",
+    "mantener_proporciones_linea",
+    "transicion_justificada_por_narrativa",
+    "evitar_mismatch_escala",
+    "validar_antes_de_usar"
+  ],
+  "forbid": ["reutilizar_con_personaje_distinto", "saltos_visuales_sin_transicion_narrativa"]
+}

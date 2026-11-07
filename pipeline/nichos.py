@@ -273,6 +273,37 @@ _NUEVA_CATEG = {
         "frecuencia": "1/semana", "monetizacion": "alto pero con riesgo de restricción de anuncios",
         "kpis": ["retención media", "compartidos"], "canal": "Pulso Curioso",
     },
+    "mentes_criminales": {
+        "nombre": "Crímenes perfectos, fallidos y errores que resolvieron el caso",
+        "descripcion": ("Casos reales con sentencia firme o hechos oficiales documentados. El foco es el método, "
+                        "la investigación y el error comprobable; nunca se declara culpable a un sospechoso "
+                        "sin condena ni se enseña un procedimiento para delinquir."),
+        "semillas": ["caso criminal condenado error forense sentencia", "robbery solved by one overlooked clue official case",
+                     "forensic mistake overturned conviction official source", "museum theft investigation FBI case"],
+        "verificable_en": ["fbi.gov", "justice.gov", "courts.gov", "ojp.gov", "apnews.com", "reuters.com"],
+        "ficción": False, "sensible": True,
+        "público": "25-54 interesado en historia criminal e investigación",
+        "identidad": "cronología precisa, distingue hechos probados, acusaciones y preguntas abiertas",
+        "formatos": ["expediente", "paradoja", "conteo"], "duracion_obj_s": (320, 700),
+        "estrategia_visual": "expediente ilustrado, mapas y objetos simbólicos; sin gore ni recreaciones que parezcan evidencia",
+        "frecuencia": "1/semana", "monetizacion": "medio-alto con cuidado de anunciantes",
+        "kpis": ["retención media", "compartidos", "comentarios con fuentes"], "canal": "Pulso Curioso",
+    },
+    "mentes_brillantes": {
+        "nombre": "Mentes brillantes: ideas que cambiaron la historia",
+        "descripcion": ("Biografías intelectuales basadas en archivos y fuentes institucionales. Se cuenta el problema, "
+                        "el razonamiento documentado y el impacto, evitando mitos de genio solitario."),
+        "semillas": ["archivo historia científica idea que cambió el mundo", "mathematician biography breakthrough institution",
+                     "inventor patent archive historical biography", "historical figure letters scientific discovery"],
+        "verificable_en": ["nobelprize.org", "loc.gov", "si.edu", "royalsocietypublishing.org", "britannica.com", "archives.gov"],
+        "ficción": False, "sensible": False,
+        "público": "18-54 curioso por ciencia, historia e inventos",
+        "identidad": "narrador claro, contexto histórico y límites de lo que se sabe",
+        "formatos": ["paradoja", "origen", "medicion"], "duracion_obj_s": (320, 700),
+        "estrategia_visual": "retratos estilizados, notas, diagramas de ideas y cronologías",
+        "frecuencia": "1/semana", "monetizacion": "alto educativo",
+        "kpis": ["retención media", "compartidos", "suscriptores"], "canal": "Pulso Curioso",
+    },
     "guerra": {
         "nombre": "Guerras, conflictos y geopolítica",
         "descripcion": "Historias de conflictos con cronología y consecuencias verificadas. FÁCTICO; nada de justificar, nada de fandom.",
@@ -329,6 +360,95 @@ _NUEVA_CATEG = {
         "monetizacion": "alto si la serie engancha", "kpis": ["vistas del siguiente episodio", "retención"],
         "canal": "Pulso Curioso",
     },
+    # Nichos nomeados por el dueño (2026-11-05) que todavía no existían como configuración:
+    # mascotas, salud y fitness, consumibles/deudas diarias y vida silvestre. Sin entrada acá,
+    # la fábrica no los elige nunca y el canal no puede probarlos con datos propios.
+    "mascotas": {
+        "nombre": "Mascotas: comportamiento, razas y cuidados verificables",
+        "descripcion": "Por qué un animal doméstico hace lo que hace, con el estudio o la medida "
+                       "que lo sostiene. Nada de antropomorfismo vendido como dato; si la ciencia "
+                       "aún no lo resolvió, el guion lo dice. FÁCTICO con fuentes.",
+        "semillas": ["por qué el perro da vueltas antes de acostarse",
+                     "qué ve un gato en la penumbra",
+                     "cómo reconoce un perro el olor de una enfermedad",
+                     "why dogs respond to human pointing"],
+        "verificable_en": ["nih.gov", "nature.com", "sciencedaily.com", "bbc.com", "reuters.com",
+                           "frontiersin.org"],
+        "ficción": False, "sensible": False,
+        "público": "18-54 dueños y amantes de animales",
+        "identidad": "narrador que traduce la conducta a mecanismo, sin humanizar de más",
+        "formatos": ["paradoja", "origen", "medicion"], "duracion_obj_s": (240, 560),
+        "estrategia_visual": "conducta real en primer plano, gráfico del estímulo-respuesta",
+        "frecuencia": "2/semana",
+        "monetizacion": "medio (alto en Facebook por compartidos, no prometido)",
+        "kpis": ["retención 30s", "compartidos"],
+        "canal": "Pulso Curioso",
+    },
+    "salud": {
+        "nombre": "Salud y fitness: qué midió el estudio y qué no",
+        "descripcion": "Fisiología y entrenamiento con el número y la muestra del estudio delante. "
+                       "PROHIBIDO: prometer curas, diagnosticar o reemplazar consejo médico; toda "
+                       "recomendación práctica se enuncia como lo que dice la evidencia, no como "
+                       "indicación personal. FÁCTICO con fuentes.",
+        "semillas": ["qué le pasa al pulso en las primeras cuatro semanas de entrenamiento",
+                     "cuánto sleep necesita realmente un adulto según la cohorte",
+                     "por qué el dolor de espalda casi nunca es una hernia",
+                     "rest between sets strength study"],
+        "verificable_en": ["who.int", "nih.gov", "nhs.uk", "mayoclinic.org", "bmj.com",
+                           "thelancet.com", "reuters.com"],
+        "ficción": False, "sensible": True,
+        "público": "25-50 que entrena o cuida su salud",
+        "identidad": "tono clínico-cotidiano, cifra con muestra y límite declarado",
+        "formatos": ["cuerpo", "medicion", "dia_a_dia"], "duracion_obj_s": (280, 640),
+        "estrategia_visual": "gráfico de curva temporal del cuerpo, comparaciones de escala",
+        "frecuencia": "2/semana",
+        "monetizacion": "medio-alto (YPP exige cuidado extra en claims de salud)",
+        "kpis": ["retención media", "guardados"],
+        "canal": "Pulso Curioso",
+    },
+    "consumos": {
+        "nombre": "Consumibles y deudas del día a día: a dónde va la plata",
+        "descripcion": "El gasto que no se ve porque es chico y repetido: suscripciones, cuotas, "
+                       "consumibles del hogar. Todo número sale de una fuente oficial o de un "
+                       "precio publicado con fecha; si el precio es de un solo país se dice cuál. "
+                       "FÁCTICO con fuentes. No se promete libertad financiera ni un rendimiento.",
+        "semillas": ["cuánto cuesta el café que se toma todos los días",
+                     "por qué la cuota del celular nunca termina",
+                     "qué es un consumible y por qué se come el presupuesto",
+                     "cost per month subscription fatigue study"],
+        "verificable_en": ["worldbank.org", "oecd.org", "imf.org", "bls.gov", "ine.es",
+                           "bcra.gob.ar", "reuters.com", "bbc.com"],
+        "ficción": False, "sensible": False,
+        "público": "22-45 con ingresos variables y deudas chicas",
+        "identidad": "cuenta clara en voz alta, número grande en pantalla, cero venta de cursos",
+        "formatos": ["medicion", "conteo", "paradoja"], "duracion_obj_s": (240, 540),
+        "estrategia_visual": "billetes/monedas reales, barra acumulada mes a mes",
+        "frecuencia": "2/semana",
+        "monetizacion": "medio (afín a finanzas, mismo público)",
+        "kpis": ["retención 30s", "CTR", "compartidos"],
+        "canal": "Pulso Curioso",
+    },
+    "fauna": {
+        "nombre": "Vida silvestre y documentales de naturaleza",
+        "descripcion": "Conducta y hábitat de especies reales, con la fuente del estudio de campo "
+                       "y el estado de conservación del listado oficial. Sin escenas fabricadas ni "
+                       "especies presentadas como peligrosas sin evidencia. FÁCTICO con fuentes.",
+        "semillas": ["cómo un pulpo resuelve un frasco sin ver la solución",
+                     "por qué un ave migratoria encuentra un punto del mapa",
+                     "qué hace un depredador en la sequía",
+                     "animal behaviour field study surprising"],
+        "verificable_en": ["nationalgeographic.com", "iucnredlist.org", "gbif.org",
+                           "smithsonianmag.com", "nature.com", "bbc.com", "noaa.gov"],
+        "ficción": False, "sensible": False,
+        "público": "18-60 curiosidad por la naturaleza",
+        "identidad": "narrador de documental, calma y detalle, cero sensacionalismo de riesgo",
+        "formatos": ["origen", "dia_a_dia", "medicion"], "duracion_obj_s": (300, 700),
+        "estrategia_visual": "hábitat, mapa de rango y escala corporal; nada de captura falsa",
+        "frecuencia": "1/semana",
+        "monetizacion": "medio-alto (natural history rinde bien en ambas plataformas)",
+        "kpis": ["retención media", "compartidos"],
+        "canal": "Pulso Curioso",
+    },
 }
 
 CATEGORIAS.update(_NUEVA_CATEG)
@@ -376,11 +496,31 @@ _BUSQUEDAS_EXTRA = {
                  "primer ferrocarril", "foto más antigua", "glaciar Moreno"],
     "mundo": ["lago Baikal Isla Olkhon", "Pompeya verano", "ciudad vertical", "aldea rural Mongolia", "suburbio informal", "etnomusica Mongolia"],
     "crimen": ["estafa pirámide", "robo al Banco Río", "contrabando frontera", "_cheque falsificado"],
+    "mentes_criminales": ["robo Museo Gardner", "caso criminal resuelto evidencia", "error forense condena anulada", "estafador condenado historia"],
+    "mentes_brillantes": ["Ada Lovelace archivo", "Katherine Johnson NASA", "Marie Curie cuadernos", "Alan Turing archivo", "Nikola Tesla patente", "Hedy Lamarr patente"],
     "guerra": ["batalla de Trafalgar", "sitio de Buenos Aires", "Guerra del Paraguay"],
     "civilizaciones": ["civilización Caral", "templo Edfu", "Códice Dresden"],
     "politica": ["reforma constitucional", "bloqueo de puertos", "acuerdo pesquero"],
     "supervivencia": ["hipotermia en río", "Alain Bombard Atlántico", "desierto sin agua"],
     "cine": ["cortometraje español", "miniserie original"],
+    # Nichos del dueño (2026-11-05) que estaban registrados como categoría pero sin consultas:
+    # sin entrada acá la fábrica no los busca contra Wikipedia y entonces nunca los elige.
+    "mascotas": ["comportamiento canino", "gato visión", "perro olfato", "ronroneo",
+                 "raza de perro", "dog cognition"],
+    "salud": ["fases del sueño", "hipertrofia muscular", "dolor lumbar", "voz máxima de oxígeno",
+              "recuperación muscular", "sleep deprivation"],
+    "consumos": ["gasto hormiga", "economía doméstica", "tarjeta de crédito", "interés compuesto",
+                 "canasta familiar", "suscripción de servicio"],
+    "fauna": ["migración de aves", "uso de herramientas animales", "lista roja de especies",
+              "comportamiento de depredadores", "comunicación animal", "corredor biológico"],
+    "finanzas": ["tasa de interés", "ahorro de hogares", "salario mínimo", "inflación",
+                 "deuda pública", "brecha salarial"],
+    "empresas": ["historia de una empresa", "quiebra corporativa", "cadena de suministro",
+                 "monopolio", "patente", "fundador de empresa"],
+    "vidas": ["biografía de científico", "explorador", "pionera", "inventor", "biografía política",
+              "autodidacta"],
+    "patrones": ["formación de hábitos", "sesgo cognitivo", "ritmo circadiano", "memoria de trabajo",
+                "toma de decisiones", "fuerza de voluntad"],
 }
 
 # Disparadores léxicos para clasificar un tema a ojo sin LLM.
@@ -396,6 +536,8 @@ _DISPARADORES_EXTRA = {
               "city", "country", "culture", "population", "continent", "village"],
     "crimen": ["crimen", "caso", "homicidio", "secuestro", "estafado", "falsificador", "forense", "juzgado", "whole", "caso abierto",
                "crime", "murder", "kidnapping"],
+    "mentes_criminales": ["crimen", "crimenes", "criminal", "criminales", "robo", "atraco", "estafador", "forense", "sentencia", "condena", "evidencia", "misterio", "heist", "fraud"],
+    "mentes_brillantes": ["genio", "genios", "brillante", "brillantes", "inventor", "inventora", "cientifico", "cientifica", "matematico", "matematica", "descubrimiento", "patente", "nobel"],
     "guerra": ["guerra", "batalla", "frente", "asedio", "conflicto", "armisticio", "tratado", "flota", "regimiento",
                "war", "battle", "siege", "front"],
     "civilizaciones": ["civilización", "religión", "ritual", "templo", "diós", "río sagrado", "sagrada", "creencia",
@@ -406,6 +548,35 @@ _DISPARADORES_EXTRA = {
                       "survival", "hypothermia", "avalancha", "desierto"],
     "cine": ["cine", "film", "pelicula", "thriller", "miniserie", "dramático", "actor", "guionista",
               "cinema", "film", "thriller", "miniseries"],
+    # Los cuatro nichos del dueño que no existían + los cuatro que ya estaban en CATEGORIAS
+    # pero sin disparadores: sin entrada acá, categoria_de() los clasifica como None y la
+    # fábrica los deja fuera del ranking aunque sean nichos nombrados por el dueño.
+    # Una sola palabra por disparador: categoria_de() compara TOKENES y "casa encantada" no matchea.
+    "mascotas": ["mascota", "perro", "perros", "canino", "canina", "ladrido", "gato", "gatos",
+                 "felino", "ronroneo", "caballo", "loro", "tutor", "raza", "obediencia",
+                 "dog", "cats", "pet", "puppy", "feline"],
+    "salud": ["salud", "entrenamiento", "musculo", "musculos", "ejercicio", "cardio", "pulso",
+              "proteina", "dieta", "lesion", "fractura", "dormir", "insomnio", "recuperacion",
+              "fisiologia", "glucosa", "colesterol", "vo2", "hipertrofia",
+              "fitness", "sleep", "workout", "muscle", "recovery"],
+    "consumos": ["gasto", "gastos", "consumible", "consumibles", "suscripcion", "cuota", "cuotas",
+                 "tarjeta", "presupuesto", "precio", "precios", "supermercado", "recibo", "plata",
+                 "compra", "compras", "monedero", "wallet", "subscription", "spending", "budget"],
+    "fauna": ["fauna", "especie", "especies", "habitat", "depredador", "depredadores", "migracion",
+              "manada", "nido", "ave", "aves", "ballena", "tiburon", "lobo", "zorro", "elefante",
+              "pulpo", "coral", "silvestre", "naturaleza", "wildlife", "species", "predator",
+              "migration", "safari"],
+    "finanzas": ["finanza", "finanzas", "dinero", "inversion", "inversiones", "tasa", "inflacion",
+                 "salario", "salarios", "banco", "bancos", "economia", "impuesto", "riqueza",
+                 "pobreza", "credito", "finance", "money", "interest", "inflation", "wage"],
+    "empresas": ["empresa", "empresas", "compania", "companias", "negocio", "fundador", "fundadora",
+                 "quiebra", "monopolio", "fabrica", "mercado", "rival", "patente", "concurso",
+                 "company", "business", "startup", "bankruptcy", "monopoly", "factory"],
+    "vidas": ["biografia", "protagonista", "pionero", "pionera", "autodidacta", "exilio", "legado",
+              "infancia", "retrato", "memorias", "diario", "biography", "pioneer"],
+    "patrones": ["habito", "habitos", "patron", "patrones", "motivacion", "disciplina", "voluntad",
+                 "circadiano", "decision", "decisiones", "autocontrol", "rutina", "procrastinacion",
+                 "habit", "habits", "willpower", "routine", "selfcontrol"],
 }
 
 PESO_INICIAL = {c: 1.0 for c in CATEGORIAS}
@@ -519,7 +690,10 @@ def categoria_de(texto: str) -> str | None:
     tokens = set(_norm(texto).split())
     puntos = {cat: sum(1 for k in palabras if _norm(k) in tokens)
               for cat, palabras in DISPARADORES.items()}
-    mejor = max(puntos, key=lambda c: puntos[c])
+    # Si un nicho específico empata con uno paraguas (p. ej. historia/crimen o psicología),
+    # gana la serie editorial específica que la persona pidió.
+    prioridad = {"mentes_criminales": 2, "mentes_brillantes": 2}
+    mejor = max(puntos, key=lambda c: (puntos[c], prioridad.get(c, 0)))
     return mejor if puntos[mejor] > 0 else None
 
 

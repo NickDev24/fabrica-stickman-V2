@@ -107,14 +107,20 @@ def enviar_para_aprobacion(ep: Episode) -> None:
 
 
 def autonomia_total() -> bool:
+    """Autonomía sólo tras N aprobaciones revisadas (factory/publish/publish_strategy.json).
+
+    Antes alcanzaba con UNA aprobación y eso convertía un descuido en publicar sin mirar.
+    """
+    from factory import parametros
     try:
         data = json.loads(AUTONOMIA.read_text(encoding="utf-8"))
-        return int(data.get("aprobaciones", 0)) >= 1
-    except Exception:
+    except (OSError, ValueError):
         return False
+    return int(data.get("aprobaciones", 0)) >= parametros.minimo_aprobaciones_humanas()
 
 
 def _actualizar_autonomia(decision: str, slug: str) -> None:
+    from factory import parametros
     AUTONOMIA.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if AUTONOMIA.exists():
@@ -126,7 +132,8 @@ def _actualizar_autonomia(decision: str, slug: str) -> None:
         data["aprobaciones"] = int(data.get("aprobaciones", 0)) + 1
     data["ultima_decision"] = {"slug": slug, "decision": decision,
                                "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}
-    data["autonomia"] = bool(int(data.get("aprobaciones", 0)) >= 1)
+    data["autonomia"] = bool(int(data.get("aprobaciones", 0)) >=
+                              parametros.minimo_aprobaciones_humanas())
     AUTONOMIA.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 

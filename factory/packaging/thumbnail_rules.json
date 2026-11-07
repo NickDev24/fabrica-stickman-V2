@@ -1,0 +1,46 @@
+{
+  "name": "stickman_thumbnail_v2",
+  "nota_de_doble_fuente": "Las reglas creativas de título+miniatura viven en packaging/title_rules.json (v2 fusionó ambos porque el CTR es el PAR, no cada pieza). Este archivo queda sólo como especificación TÉCNICA de producción de la portada, para no tener dos verdades.",
+  "estado_real": "ANTES de la corrección v6: captacion.py generaba sólo derivados/portada.jpg (1080x1920) estirando la fuente y no existía ningún 1280x720; el video largo subía con el frame que elige YouTube.",
+  "salidas": {
+    "youtube_episodio": {
+      "archivo": "derivadas/portada-yt.jpg",
+      "resolucion": "1280x720",
+      "peso_max_kb": 2048,
+      "obligatorio": true,
+      "estado": "producido: portada-yt.jpg 1280x720"
+    },
+    "facebook_feed": {
+      "archivo": "derivadas/portada-fb.jpg",
+      "resolucion": "1080x1350"
+    },
+    "vertical_reel": {
+      "archivo": "derivadas/portada.jpg",
+      "resolucion": "1080x1920",
+      "nota": "ruta actual, seguir usándola para reel/short"
+    }
+  },
+  "fuente_de_imagen": [
+    "prioridad 1: el beat marcado como clímax por beats.elegir_gancho_visual (ya existe en código)",
+    "prioridad 2: still del momento de mayor tensión física (caída, aplastamiento, bifurcación)",
+    "prohibido: un plano informativo o un gráfico sin personaje"
+  ],
+  "overlay": {
+    "palabras_max": 6,
+    "caracteres_max": 22,
+    "lineas_max": 2,
+    "fuente_tamaño": "110 px en 1080x1920; 74 px equivalente en 1280x720",
+    "color": "amarillo de marca con borde oscuro de 8 px",
+    "regla_de_no_repeticion": "el overlay no puede contener más de 1 palabra del título"
+  },
+  "test_de_aceptacion": [
+    "visible y legible a 320 px de ancho",
+    "se entiende el conflicto sin leer el título",
+    "contraste suficiente para móvil en luz de día",
+    "el stickman ocupa entre 35% y 60% del cuadro"
+  ],
+  "wiring": {
+    "estado_actual": "pipeline/stages/captacion.py:_dibujar_portada produce las tres salidas en la misma pasada; el tamaño de letra es proporcional al ancho (110 px sobre 1080) y el recorte preserve-aspect-ratio (antes estiraba).",
+    "prueba": "tests/test_portada.py::test_la_miniatura_horizontal_de_youtube_existe"
+  }
+}

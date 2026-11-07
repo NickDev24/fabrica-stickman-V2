@@ -22,7 +22,6 @@ from pathlib import Path
 
 from .. import config, formatos
 from ..episode import Episode
-from .montaje import ASS_FORMAT, validar_ass
 
 FUENTE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 TIPOS = ("broll", "presentador", "numero")
@@ -58,45 +57,7 @@ def _asignar(shots: list[dict], hay_imagen: bool) -> None:
             s["tipo"] = "presentador"  # el presentador nunca esta ausente mas de 3,5 s
 
 
-def _captions(shots: list[dict], alto: int, inferior: int, path: Path) -> Path:
-    """Subtítulos por plano: caja oscura (regla "legible sobre cualquier fondo"), zona segura."""
-    lineas = []
-    t = 0.0
-    for s in shots:
-        words = s["texto"].split()
-        for half in range(0, len(words), 6):
-            trozo = " ".join(words[half:half + 6])
-            paso = s["dur"] / max(1, len(range(0, len(words), 6)))
-            a = t + half / 6 * paso
-            b = a + paso
-            lineas.append(f"Dialogue: 0,{_ts(a)},{_ts(b)},Default,,0,0,0,,{{\\an8\\bord3\\shad0}}"
-                          f"{trozo.replace('{', '').replace('}', '')}")
-        t += s["dur"]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    texto = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {config.SHORT_W}
-PlayResY: {config.SHORT_H}
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginV, Encoding
-Style: Default, DejaVu Sans, {config.SHORT_SUB}, &H00FFFFFF, &H00000000, &HA0000000, 1, 0, 3, 4, 0, 2, {inferior}, 1
-
-[Events]
-Format: {ASS_FORMAT}
-""" + "\n".join(lineas) + "\n"
-    validar_ass(texto, str(path))
-    path.write_text(texto, encoding="utf-8")
-    return path
-
-
-def _ts(s: float) -> str:
-    h, r = divmod(s, 3600)
-    m, sec = divmod(r, 60)
-    return f"{int(h)}:{int(m):02d}:{sec:05.2f}"
-
-
-def _plano(shots: list[dict], idx: int, img: Path | None, out: Path, sub: Path) -> None:
+def _plano(shots: list[dict], idx: int, img: Path | None, out: Path) -> None:
     s = shots[idx]
     W, H, FPS = config.SHORT_W, config.SHORT_H, config.SHORT_FPS
     base = ["ffmpeg", "-y", "-v", "error", "-t", f"{s['dur']}"]
@@ -111,13 +72,13 @@ def _plano(shots: list[dict], idx: int, img: Path | None, out: Path, sub: Path) 
                 f"[1:v]scale={int(W*0.86)}:-1:m=laplacens:flags=lanczos[pp];[bg][pp]overlay=(W-w)/2:H*0.16")
         _run(base + ["-loop", "1", "-framerate", str(FPS), "-i", str(fondo or config.MASCOTA_HERO),
                      "-loop", "1", "-framerate", str(FPS), "-i", str(config.MASCOTA_HERO),
-                     "-filter_complex", capa + f",subtitles={sub}[v]", "-map", "[v]"] + enc)
+                     "-filter_complex", capa + "[v]", "-map", "[v]"] + enc)
         return
 
     if img is not None:
         _run(base + ["-loop", "1", "-framerate", str(FPS), "-i", str(img),
                      "-vf", (f"scale=2600:4620:force_original_aspect_ratio=increase,crop=2600:4620,"
-                             f"{empuje},subtitles={sub}")] + enc)
+                             f"{empuje}")] + enc)
         return
 
     # sin imagen: tarjeta de dato puro, movimiento de entrada + fondo degradado (nunca congelado)
@@ -128,8 +89,7 @@ def _plano(shots: list[dict], idx: int, img: Path | None, out: Path, sub: Path) 
           "-t", f"{s['dur']}", "-vf",
           (f"drawtext=fontfile={FUENTE}:text='{_esc(grande)}':fontcolor=white:fontsize=150:"
            f"x=(w-text_w)/2:y=(h-text_h)/2:alpha='min(1,t/0.35)',"
-           f"zoompan=z='min(zoom+0.002,1.06)':d={marcos}:s={W}x{H}:fps={FPS},"
-           f"subtitles={sub}")] + enc)
+           f"zoompan=z='min(zoom+0.002,1.06)':d={marcos}:s={W}x{H}:fps={FPS}")] + enc)
 
 
 def narracion_corta(ep: Episode, bloques: list[str], pad_entre_s: float = 0.12) -> Path:
@@ -203,7 +163,6 @@ def render(ep: Episode, perfil_clave: str = "short_vertical") -> dict:
     imagenes = sorted(ep.dir.glob("assets/img/*.jpg")) + sorted(ep.dir.glob("assets/img/*.png"))
     hay_imagen = bool(imagenes)
     _asignar(shots, hay_imagen)
-    sub = _captions(shots, H, perfil.margen_inferior, ep.dir / "assets" / "sub" / "short.ass")
 
     partes = ep.dir / "renders" / "short-parts"
     partes.mkdir(parents=True, exist_ok=True)
@@ -211,7 +170,7 @@ def render(ep: Episode, perfil_clave: str = "short_vertical") -> dict:
         old.unlink()
     for i, s in enumerate(shots):
         img = imagenes[i % len(imagenes)] if (hay_imagen and s["tipo"] == "broll") else None
-        _plano(shots, i, img, partes / f"p-{i:03d}.mp4", sub)
+        _plano(shots, i, img, partes / f"p-{i:03d}.mp4")
 
     lista = partes / "order.txt"
     lista.write_text("".join(f"file '{partes / f'p-{i:03d}.mp4'}'\n" for i in range(len(shots))),

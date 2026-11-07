@@ -43,6 +43,10 @@ ACCIONES: list[tuple[str, str]] = [
 ]
 
 ESCENARIOS: list[tuple[str, str]] = [
+    (r"\b(museo|museums|galer[ií]a|vermeer|rembrandt|degas|manet|cuadros?|pinturas?)\b", "galeria"),
+    (r"\b(polic[ií]a|polic[ií]as|uniforme|guardia|guardias|intercomunicador|disturbio|dejo entrar|dejó entrar)\b", "entrada_museo"),
+    (r"\b(s[oó]tano|atados|esposados|basement|handcuffed)\b", "sotano_museo"),
+    (r"\b(marcos? vac[ií]os?|obra desaparecida|obras robadas|recompensa)\b", "marcos_vacios"),
     (r"\b(supermercado|helader|comida|despensa|alimento|conserva)\b", "super"),
     (r"\b(azotea|techo|edificio arriba|borde del edificio)\b", "azotea"),
     (r"\b(cocina|living|casa|puerta de|cuarto|sala)\b", "interior"),
@@ -137,9 +141,9 @@ def _mov(plano: str, emocion: str, i: int) -> str:
 
 
 def _direccion(texto: str, accion: str, escena: str, emocion: str, indice: int,
-               contexto: str = "") -> dict:
+               contexto: str = "", contexto_historia: str = "") -> dict:
     """Dirección concreta del beat: idea, metáfora/prop, actuación, cámara y payoff."""
-    t = f"{texto} {contexto}".casefold()
+    t = f"{texto} {contexto} {contexto_historia}".casefold()
     # La idea es la ORACIÓN completa, no el fragmento de 1,5 s: si se corta en 34
     # caracteres, Flux recibe "En 2005, un" y dibuja lo que sea. El foco del beat
     # queda como segundo plano para dar progresión dentro de la misma oración.
@@ -148,6 +152,41 @@ def _direccion(texto: str, accion: str, escena: str, emocion: str, indice: int,
     idea = f"{idea_base} | beat: {foco}"[:115]
     f = texto.casefold()
     t_norm = re.sub(r"\s+", " ", t)
+    # Caso Gardner y otros robos de arte: la escena muestra el hecho narrado y usa
+    # símbolos sin rótulos para no pedir a Flux texto falso ni inventar evidencia.
+    tema_gardner = any(k in contexto_historia.casefold()
+                       for k in ("gardner", "obra de arte", "obras de arte", "museo", "rembrandt", "vermeer", "degas"))
+    detalle_local = f"{texto} {contexto}".casefold()
+    if tema_gardner:
+        if any(k in detalle_local for k in ("millones", "millón", "dólares", "valor", "estima")):
+            return {"idea": idea, "prop": "flat hand-drawn ink scene: one stickman beside thirteen empty gilded frames and a large pile of gold coins, no lettering or photo",
+                    "acting": "the stickman measures the pile against the empty frames",
+                    "reveal": "the reported value is enormous", "movimiento_local": "the balance tilts slowly",
+                    "camara": "slow push toward the scale"}
+        if any(k in detalle_local for k in ("polic", "uniforme", "intercomunicador", "entrada", "disturbio", "dejó entrar", "dejo entrar")):
+            return {"idea": idea, "prop": "museum employee entrance, intercom, two generic police silhouettes at the door",
+                    "acting": "the stickman guard hesitates beside the employee entrance as two uniformed silhouettes wait outside",
+                    "reveal": "the employee door opens", "movimiento_local": "the door swings inward",
+                    "camara": "slow push toward the entrance"}
+        if any(k in detalle_local for k in ("sótano", "sotano", "basement", "guardias", "atados", "esposados")):
+            return {"idea": idea, "prop": "quiet museum basement corridor, two security guards seated safely beside a support post, no violence",
+                    "acting": "the stickman points toward the corridor while a clock marks elapsed time",
+                    "reveal": "the guards are separated from the galleries", "movimiento_local": "a pool of light moves down the corridor",
+                    "camara": "measured lateral pan"}
+        if any(k in detalle_local for k in ("marco", "vacío", "vacio", "desaparecid", "recompensa", "recuper")):
+            return {"idea": idea, "prop": "ornate empty gilded painting frame on a museum wall, gallery visitors in silhouette",
+                    "acting": "the stickman stands beside the empty frame and traces its outline",
+                    "reveal": "the frame remains empty", "movimiento_local": "dust motes drift through the gallery light",
+                    "camara": "slow push toward the empty frame"}
+        if any(k in detalle_local for k in ("vermeer", "rembrandt", "degas", "manet", "cuadro", "pintura", "obra")):
+            return {"idea": idea, "prop": "museum wall with empty ornate frames, floor plan marked by thirteen red dots, no lettering",
+                    "acting": "the stickman compares the empty frames with a simple museum floor plan",
+                    "reveal": "thirteen distinct spaces are marked by red outlines", "movimiento_local": "one frame outline appears at a time",
+                    "camara": "pan across the gallery wall"}
+        return {"idea": idea, "prop": "museum gallery at night, empty ornate frames, security desk and analog clock",
+                "acting": "the stickman follows a quiet trail from the entrance toward the gallery",
+                "reveal": "the gallery contains absences rather than paintings", "movimiento_local": "a narrow beam of light crosses the room",
+                "camara": "slow tracking shot through the gallery"}
     # Casos documentales: elegir el plano por la idea del beat y su contexto completo,
     # no por una palabra aislada como "operaciones".
     if any(k in t for k in ("ponzi", "inversores nuevos", "dinero nuevo", "inversores anteriores")):
@@ -243,6 +282,8 @@ def _direccion(texto: str, accion: str, escena: str, emocion: str, indice: int,
 def _arco_escenas(texto: str) -> list[str]:
     """Selecciona una secuencia de lugares por el asunto dominante, no al azar por beat."""
     t = texto.casefold()
+    if re.search(r"\b(museo|gardner|rembrandt|vermeer|degas|manet|obra[s]? de arte|robo de arte)\b", t):
+        return ["entrada_museo", "sotano_museo", "galeria", "marcos_vacios", "galeria"]
     if re.search(r"\b(neurona|cerebro|memoria|sueño|ansiedad|conducta|psicolog|dopamina)\w*", t):
         return ["interior", "hospital", "pasillo", "interior"]
     if re.search(r"\b(laboratorio|experimento|científic|átomo|partícula|fósil|planeta|espacio)\w*", t):
@@ -298,6 +339,19 @@ POSES_ARCHIVO = [
     "compara dos carpetas abiertas",
     "cierra el cajón y sigue caminando",
 ]
+POSES_MUSEO = [
+    "holds a small flashlight toward an empty gilded frame",
+    "compares an old gallery plan with the empty wall",
+    "places thirteen neutral markers beside the museum floor plan",
+    "stops at the employee entrance and listens",
+    "points to the analog clock beside the security desk",
+]
+POSES_VALOR = [
+    "measures a gold coin pile beside empty frames",
+    "sets a small scale beside the empty frames",
+    "counts blank gold coins on the gallery floor plan",
+    "looks from the empty frames to the coin pile",
+]
 POSES_CALLE = [
     "sostiene el documento oficial contra el pecho",
     "señala la fecha del documento",
@@ -316,6 +370,11 @@ MICRO_MOV = ["la mano entra en cuadro", "el dedo recorre el borde",
 
 def _poses_para(prop: str, escena: str) -> list[str]:
     p = prop.casefold()
+    if "gold coin" in p or "coin pile" in p:
+        return POSES_VALOR
+    if escena in ("galeria", "entrada_museo", "sotano_museo", "marcos_vacios") or any(
+            k in p for k in ("museum", "gallery", "artwork", "gilded frame")):
+        return POSES_MUSEO
     if "ponzi" in p or "flow" in p:
         return POSES_FLUJO
     if any(k in p for k in ("file", "report", "complaint")):
@@ -399,12 +458,12 @@ def fijar_gancho_visual(beats: list[dict]) -> None:
                              "hacia": d.get("prop", "")}
 
 
-def dirigir(beats: list[dict]) -> None:
+def dirigir(beats: list[dict], contexto_historia: str = "") -> None:
     """Añade progresión de escena, pose y continuidad serial al storyboard determinista."""
     historial_poses: list[str] = []
     for i, b in enumerate(beats):
         d = _direccion(b["texto"], b["accion"], b["escena"], b["emocion"], i,
-                       b.get("contexto", ""))
+                       b.get("contexto", ""), contexto_historia)
         _rotar_pose(d, i, b["escena"], historial_poses)
         # Si tres cortes seguidos comparten encuadre, se fuerza un plano de detalle.
         if i >= 2 and beats[i-1]["plano"] == beats[i-2]["plano"] == b["plano"]:
@@ -425,7 +484,7 @@ def dirigir(beats: list[dict]) -> None:
 
 
 def plan(segments: list[dict], emociones: list[str] | None = None,
-         escena_base: str = "calle") -> list[dict]:
+         escena_base: str = "calle", contexto_historia: str = "") -> list[dict]:
     """segments: [{texto, dur_s}] de la narración real de Piper. Devuelve beats con t0/t1."""
     emociones = emociones or []
     beats: list[dict] = []
@@ -451,7 +510,7 @@ def plan(segments: list[dict], emociones: list[str] | None = None,
             acciones_validas = list(dict.fromkeys(v for _, v in ACCIONES)) + ACCIONES_ARCO
             accion = _evitar_tercera_repeticion(accion, acciones_previas, acciones_validas, len(beats))
             etapa = min(len(arco) - 1, int(si * len(arco) / max(1, len(segments))))
-            escena = _regla(ESCENARIOS, texto, "") or arco[etapa]
+            escena = _regla(ESCENARIOS, f"{texto} {oracion}", "") or arco[etapa]
             plano = "medio"  # se asigna con el total real al terminar de construir los beats
             fx = []
             if FUERTE.search(texto):
@@ -482,7 +541,11 @@ def plan(segments: list[dict], emociones: list[str] | None = None,
             b["t0"] = round(acum, 3)
             acum += b["dur_s"]
             b["t1"] = round(acum, 3)
-    dirigir(beats)
+    contexto = " ".join(x for x in (contexto_historia,
+                                    " ".join(str(s.get("texto", "")) for s in segments)) if x)
+    for beat in beats:
+        beat["contexto_historia"] = contexto_historia[:240]
+    dirigir(beats, contexto)
     return beats
 
 

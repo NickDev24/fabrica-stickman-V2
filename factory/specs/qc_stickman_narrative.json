@@ -1,0 +1,35 @@
+{
+  "name": "qc_stickman_narrative_v2",
+  "estado_real": "Este QC narrativo nunca se ejecutó: ningún .py lo carga. El único QC que corre es técnico (keyframes.py:_qc: resolución, duración ±0.8 s y LUFS -14±2). Un guion de 312 palabras pasó como episodio válido.",
+  "se_ejecuta_como": "gate antes de pasar a narración + score final con factory/metrics/qc_score_rubric.json",
+  "checks": [
+    {"id": "extension", "type": "count", "rule": "1300 <= palabras <= 1600", "severity": "critical", "automatizable": "sí, hoy NO implementado"},
+    {"id": "hook_question", "type": "regex", "rule": "primera_oracion = pregunta de 6-12 palabras, cierra con '?', sin 'sabias que', sin fecha inicial", "severity": "critical", "automatizable": "sí, YA existe en guion.py:36-81"},
+    {"id": "protagonist", "type": "semantic", "rule": "el stickman tiene arco: situación -> decisión -> consecuencia -> punto bajo -> comprensión", "severity": "critical", "automatizable": "LLM-as-judge con rúbrica de 1 línea"},
+    {"id": "no_list", "type": "anti_pattern", "rule": "cero enumeraciones y cero formato 'conteo' en episodio largo", "severity": "critical", "automatizable": "regex de ordenales + filtro en nichos.elegir_formato"},
+    {"id": "loops", "type": "count", "rule": "6-8 bucles, ninguno con más de 90 s sin apertura nueva, cada cierre encadena", "severity": "critical", "automatizable": "parcial (plantillas verbales de story_engine.json)"},
+    {"id": "loop_paga", "type": "semantic", "rule": "la revelación del bloque inflexión responde la pregunta exacta del hook", "severity": "critical", "automatizable": "LLM-as-judge"},
+    {"id": "quiebre_asuncion", "type": "semantic", "rule": "LATIDO 2 dentro de las 3 primeras frases post-gancho", "severity": "high", "automatizable": "LLM-as-judge"},
+    {"id": "giro_practico", "type": "semantic", "rule": "aplicable a la vida del espectador y derivado de la historia", "severity": "high"},
+    {"id": "cierre", "type": "semantic", "rule": "frase memorable + pregunta de debate, sin resumen redundante", "severity": "high"},
+    {"id": "metaforas", "type": "visual", "rule": "todo concepto abstracto del guion tiene metáfora mapeada en stickman_motion_rules.json", "severity": "high"},
+    {"id": "sin_frames_muertos", "type": "visual", "rule": "ninguna ventana de 2 s con delta de píxeles < 0.1% (ffmpeg signalstats YDIF)", "severity": "critical", "automatizable": "sí, hoy NO implementado"},
+    {"id": "ritmo_primeros_30s", "type": "visual", "rule": "al menos 6 planos y 1 cambio de cámara distinto en los primeros 30 s", "severity": "high", "automatizable": "sí sobre beats.json"},
+    {"id": "pop_cobertura", "type": "visual", "rule": ">=35% de los beats con POP de palabra clave sincronizado", "severity": "high"},
+    {"id": "sync", "type": "visual", "rule": "80%+ de las palabras clave caen en el beat que representa su metáfora", "severity": "high"},
+    {"id": "reuse_consistent", "type": "visual", "rule": "reciclaje de imágenes valida identidad/escala/iluminación (assets/image_reuse_policy.json)", "severity": "high"},
+    {"id": "packaging_par", "type": "packaging", "rule": "título 45-70 caracteres, overlay <=6 palabras, solapamiento <=1 palabra, portada 16:9 existente", "severity": "critical"},
+    {"id": "publicacion_real", "type": "publish", "rule": "AUTO_PUBLISHED sólo con >=1 id de medio devuelto y persistido", "severity": "critical"}
+  ],
+  "pass_criteria": {
+    "critical_all_pass": true,
+    "score_minimo": 82,
+    "score_fuente": "factory/metrics/qc_score_rubric.json",
+    "nota": "un crítico fallado bloquea aunque el score sea 95: los puntos no compran un gancho roto"
+  },
+  "wiring": {
+    "punto_de_carga_1": "pipeline/stages/guion.py: agregar gate_extension() y gate_bucles() en la cadena de gates (líneas 180-221)",
+    "punto_de_carga_2": "pipeline/stages/keyframes.py:_qc (635) sumarle sin_frames_muertos y ritmo_primeros_30s",
+    "punto_de_carga_3": "pipeline/stages/tele_revision.py: mostrar el score en el mensaje de aprobación humana"
+  }
+}

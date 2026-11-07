@@ -1,0 +1,121 @@
+{
+  "name": "stickman_vo_config_v2",
+  "contradiccion_resuelta": {
+    "conflicto": "docs/CONFIGURACIONES-QUIRURGICAS-FABRICA.md CFG-07 dice 'voz es_AR-daniela-high, prohibido Tomas'. El código navega a otra cosa: pipeline/config.py:20 arma VOZ_PREFERIDA con EDGE_TTS_VOICE y la línea 45 reasigna EDGE_TTS_VOICE='es-AR-TomasNeural' sin condición. Los dos últimos episodios medidos salen con edge-tts:es-AR-TomasNeural (metadata.voice).",
+    "estado": "DECIDIDO 2026-11-05: es canónica edge-tts:es-AR-TomasNeural, la que el dueño eligió el 2026-11-04 y la que efectivamente sale en los episodios. CFG-07 queda obsoleto.",
+    "action_minima": "HECHA 2026-11-05: config.py toma el default de este archivo (parametros.voz_canonica()), EDGE_TTS_VOICE sólo aplica si la canónica es edge-tts y el env sigue mandando."
+  },
+  "voz_canonica": "edge-tts:es-AR-TomasNeural",
+  "voz_canonica_por_que": "Decisión del dueño 2026-11-04 (config.py:19-20, 'voz CapCut-like para todos los capítulos'), revisada en V4/V5 y validada al oído. Se mantiene y se corrige el doc CFG-07, que estaba viejo. Piper daniela queda como fallback offline.",
+  "voz_fallback": "piper:es_AR-daniela-high",
+  "allowlist_codigo": "pipeline/config.py VOICE_ALLOWLIST (gate 2 en gates.py:103) — sólo esas referencias",
+  "ritmo": {
+    "palabras_por_segundo": {
+      "piper_daniela": 2.6,
+      "edge_tomas_voz_sola": 2.834,
+      "edge_tomas_con_pausas_de_bloque": 2.668,
+      "fuente": "medido 2026-11-05 sobre un episodio real de 314 palabras (7 párrafos), silencio recortado a -45 dB; por párrafo varió 2,59-3,49"
+    },
+    "wpm_nominal": 160,
+    "rango_aceptable_wpm": [
+      155,
+      209
+    ],
+    "consecuencia": "el presupuesto de palabras del template se deriva: 1340-1600 palabras para 500-600 s. Si cambia la voz o el rate, se recalcula ahí y en los bloques, no a mano."
+  },
+  "profiles": {
+    "narrador_directo": {
+      "uso": "exploración y giro práctico",
+      "pace_wpm": [
+        150,
+        165
+      ],
+      "energia": "calma tensa, en ascenso por bucle",
+      "tono": "conversacional, segunda persona"
+    },
+    "narrador_gancho": {
+      "uso": "hook 0-15s",
+      "pace_wpm": [
+        140,
+        150
+      ],
+      "energia": "arranque seco",
+      "tono": "sin prisa, sin subir el volumen: la pregunta se sostiene con pausa, no con grito"
+    },
+    "narrador_revelacion": {
+      "uso": "bloque inflexión",
+      "pace_wpm": [
+        135,
+        148
+      ],
+      "energia": "baja y clara",
+      "tono": "serio sin gritar"
+    }
+  },
+  "pausas_ms": {
+    "coma": 280,
+    "punto": 550,
+    "punto_y_como_o_dos_puntos": 450,
+    "signo_de_interrogacion": 600,
+    "entre_bloques": 850,
+    "dramatica_antes_de_revelacion": [
+      600,
+      900
+    ],
+    "despues_de_la_pregunta_del_hook": 350,
+    "resolucion_v1": "voice_config v1 decía coma 150 / punto 400 y CFG-07 decía 280 / 550. Se adopta CFG-07 porque coincide con el silencio medido de Piper (config.py PIPER_SENTENCE_SILENCE 0.65).",
+    "fin_de_bloque_ms": 650,
+    "fin_de_bloque_pregunta_ms": 900,
+    "variacion_ciclo": [1.15, 0.90, 1.05, 0.90, 1.10, 0.90],
+    "variacion_ciclo_por_que": "La media del ciclo es exactamente 1,000 (6 valores que suman 6,00), así que el presupuesto de palabras derivado de 2,668 pal/s NO se mueve: lo único que cambia es que las pausas dejen de ser todas iguales. Una pausa de 650 ms repetida bloque tras bloque se escucha como reloj; el habla humana oscila ±15% entre descansos consecutivos sin cambiar el tempo general.",
+    "lo_que_el_codigo_puede_cumplir": "Los valores de coma/punto/? los aplica el motor de voz, no nosotros: edge-tts IGNORA el espaciado extra (medido: 'A. B.' y 'A.  B.' dan exactamente la misma duración), así que duplicar espacios no produce ninguna pausa. Lo único que podemos garantizar digitalmente es el silencio entre bloques, y eso es lo que narracion._respirar inyecta con apad."
+  },
+  "reglas": [
+    "bajar el ritmo en la revelación, nunca subirlo",
+    "acelerar apenas dentro de la escalada de un bucle, y volver a base al cerrarlo",
+    "énfasis de una sola palabra por frase; dos énfasis anulan ambos",
+    "la pausa es información: una pausa de 600 ms antes del dato vale más que subir el volumen",
+    "prohibido sobreactuar, susurrar de forma sostenida o leer monótono",
+    "pronunciación: números y unidades leídos en español rioplatense ('$3.000' -> 'tres mil pesos', no 'tres punto cero cero cero')",
+    "prohibido 'vos'/'tú' mezclados dentro del mismo episodio"
+  ],
+  "implementacion_en_codigo": {
+    "marcado_de_pausas_real": "narracion._respirar: silenceremove + apad con los números de pausas_ms. _marcar_prosodia ya no duplica espacios (era decorativo), ahora normaliza lo que el motor lee mal: '12,5%' -> '12,5 por ciento' y separadores de miles.",
+    "control_de_ritmo": "narracion._edge pasa --rate y --pitch desde prosodia por rol. Piper recibe el MISMO ajuste traducido: parametros.length_scale(rol) = 1/(1+rate), o sea -6% -> 1,064. Antes la rama piper ignoraba el rol y el gancho se leía igual de rápido que el resto.",
+    "pausa_no_metronomica": "narracion._gap_de_bloque multiplica fin_de_bloque_ms por variacion_ciclo[i % 6]. Media exacta 1,000: el presupuesto de palabras no se corre (test_voz.test_la_variacion_de_pausa_no_mueve_la_media).",
+    "loudness": "-14 LUFS con true peak -1,5 (gate real en keyframes._qc)"
+  },
+  "forbid": [
+    "robotico_monotono",
+    "excesivamente_teatral",
+    "whispering_constante",
+    "clonacion_de_voz_de_personas_reales"
+  ],
+  "wiring": {
+    "estado_actual": "CABLEADO 2026-11-05. Lectores reales: pipeline/config.py toma voz_canonica() como default de VOZ_PREFERIDA (el env sigue mandando); narracion._edge y narracion._piper toman prosodia/length_scale por rol; narracion._gap_de_bloque y _respirar toman pausas_ms + variacion_ciclo; narracion.narrar cierra con gates.gate_ritmo contra ritmo.palabras_por_segundo. Regresión en tests/test_voz.py (17 casos).",
+    "punto_de_carga_1": "HECHO — pipeline/config.py:20 lee parametros.voz_canonica(); ya no hay reasignación incondicional de EDGE_TTS_VOICE.",
+    "punto_de_carga_2": "HECHO DISTINTO A LO PROMETIDO — la pausa entre bloques se inyecta sobre el WAV (narracion._respirar con apad), no sobre el texto: el CLI de edge-tts no admite <break> y el espaciado extra estaba probado como decorativo. Los ms de coma/punto/? los sigue decidiendo el motor.",
+    "punto_de_carga_3": "HECHO — el rol sale de la posición y la puntuación del bloque (narracion._rol_de_bloque: gancho / pregunta / base), no de un perfil que el guion todavía no etiqueta."
+  },
+  "prosodia": {
+    "nota_medicion": "Medido 2026-11-05, edge-tts 7.3.1 / es-AR-TomasNeural. El --rate y el --pitch llegan y se cumplen (una prueba con +25%/-25% cambió la duración 4,08 s/6,74 s contra 5,06 s base, proporcional). Dos cosas que NO se pueden sostener: (1) el servicio no es determinista — dos tomas idénticas de un mismo párrafo difieron hasta 1,8 s —; (2) el ritmo por párrafo varía 2,59-3,49 pal/s según el texto. Por eso el ajuste de rate se aplica sólo al gancho y a las preguntas (-6%, donde la pausa es información) y el pitch se baja -2Hz en todo (no altera la duración medida). Base +0% para no achicar el capítulo.",
+    "base": {
+      "rate": "+0%",
+      "pitch": "-2Hz"
+    },
+    "gancho": {
+      "rate": "-6%",
+      "pitch": "-2Hz"
+    },
+    "pregunta": {
+      "rate": "-6%",
+      "pitch": "-3Hz"
+    }
+  },
+  "respiracion_de_bloque": {
+    "recortar_silencio_inicial": true,
+    "umbral_recorte_db": -45,
+    "razon": "el silencio que el motor deja AL PRINCIPIO de cada bloque se escucha como duda; el que va AL FINAL es información. Se cortan los ~0,2-0,4 s de aire muertos de adelante y se miden los de atrás.",
+    "donde": "pipeline/stages/narracion.py:_respirar"
+  }
+}

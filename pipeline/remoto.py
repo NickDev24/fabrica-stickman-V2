@@ -74,13 +74,18 @@ def _procesar(host: str, remoto: str, cola: list[dict], partes: Path,
     """Todo el trabajo de un nodo: push -> ffmpeg serie -> pull -> marcas."""
     hechos: list[str] = []
     _empujar(host, remoto, [Path(b["_img"]) for b in cola])
-    from .stages.keyframes import CAMARA, KF_FPS, W, H, _recorte
+    from .stages.keyframes import (CAMARA, KF_FPS, RESPIRACION_MIN_S, RESPIRACION_PX, W, H,
+                                   _deriva, _recorte)
     for b in cola:
         nombre_img = Path(b["_img"]).name
         out_rem = f"{remoto}/k-{b['i']:03d}.mp4"
         frames = max(1, int(round(b["dur_s"] * KF_FPS)))
         cam = CAMARA.get(b["mov"], CAMARA["fijo"]).format(n=max(1, frames - 1))
-        vf = (f"{_recorte()},zoompan={cam}:d={frames}:s={W}x{H}:fps={KF_FPS}"
+        respira = b["dur_s"] > RESPIRACION_MIN_S
+        lienzo = (f"{W + 2 * RESPIRACION_PX}x{H + 2 * RESPIRACION_PX}" if respira
+                  else f"{W}x{H}")
+        vf = (f"{_recorte()},zoompan={cam}:d={frames}:s={lienzo}:fps={KF_FPS}"
+              + (f",crop={W}:{H}:x={RESPIRACION_PX}:y='{_deriva(b['i'])}'" if respira else "")
               + (",fade=t=in:st=0:d=0.10:color=white" if "flash" in (b.get("fx") or []) else ""))
         cmd = (f'ffmpeg -y -v error -loop 1 -i "{remoto}/{nombre_img}" '
                f'-t {b["dur_s"]:.3f} -vf "{vf}" '

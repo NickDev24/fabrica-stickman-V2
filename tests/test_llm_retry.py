@@ -107,3 +107,71 @@ def test_chat_no_multiplica_los_intentos(monkeypatch, fake):
     with pytest.raises(llm.AllProvidersFailed):
         llm.chat([{"role": "user", "content": "x"}], task="prueba")
     assert llamadas["n"] == 2 * config.LLM_MAX_RETRIES_PER_PROVIDER
+
+
+# --- routing por tarea (2026-11-05: ALLOW_PAID_LLM=1 mandaba Gemini al frente de TODAS
+# las tareas y las ~90 llamadas baratas de una corrida se comieron los 6 USD del mes) ---
+
+def test_tag_se_traduce_a_tarea_de_config():
+    assert config.tarea_para_tag("guion-1") == "guion"
+    assert config.tarea_para_tag("factcheck") == "verificacion"
+    assert config.tarea_para_tag("queries") == "investigacion"
+    assert config.tarea_para_tag("nada_conocido") == "default"
+
+
+def test_gemini_solo_encabeza_tareas_premium(monkeypatch):
+    for k in ("ALLOW_REMOTE_LLM", "ALLOW_PAID_LLM", "ALLOW_AIONLABS"):
+        monkeypatch.setenv(k, "1")
+    assert llm.ruta_de("guion")[0] == "gemini"
+    for barata in ("investigacion", "prompts_visuales", "direccion", "default"):
+        assert "gemini" not in llm.ruta_de(barata), barata
+
+
+def test_verificacion_no_usa_el_mismo_proveedor_que_el_guion(monkeypatch):
+    """Misión §3: aunque guion sea premium, quien valida tiene que ser otro modelo."""
+    for k in ("ALLOW_REMOTE_LLM", "ALLOW_PAID_LLM"):
+        monkeypatch.setenv(k, "1")
+    assert llm.ruta_de("verificacion")[0] != llm.ruta_de("guion")[0]
+
+
+def test_sin_banderas_la_ruta_queda_local(monkeypatch):
+    for k in ("ALLOW_REMOTE_LLM", "ALLOW_PAID_LLM", "ALLOW_AIONLABS"):
+        monkeypatch.delenv(k, raising=False)
+    assert llm.ruta_de("guion") == ["ollama"]
+    assert llm.ruta_de("default") == ["ollama"]
+
+
+def test_el_techo_local_recorta_la_salida_sin_reventar(monkeypatch):
+    """Ollama /v1 ignora options.num_ctx: el payload tiene que caber en 4096 tokens."""
+    monkeypatch.setenv("OLLAMA_CONTEXTO_TOKENS", "4096")
+    mensajes = [{"role": "system", "content": "x" * 30000},
+                {"role": "user", "content": "y" * 300}]
+    assert llm._techo_local(2600, mensajes) == 120    # no entra: baja al piso, no revienta
+    intermedios = [{"role": "system", "content": "x" * 9000}]
+    assert llm._techo_local(2600, intermedios) < 2600  # recorte proporcional al prompt
+    assert llm._techo_local(900, [{"role": "user", "content": "chico"}]) == 900
+
+
+def test_el_contenido_de_un_choice_puede_venir_como_objeto():
+    assert llm._contenido_de({"message": {"content": "hola"}}) == "hola"
+    assert llm._contenido_de({"message": {"content": {"content": "hola"}}}) == "hola"
+    assert llm._contenido_de({"message": {"content": ["hola"]}}) == ""   # nunca revienta
+    assert llm._contenido_de({}) == ""
+
+
+def test_sin_razonamiento_no_revienta_con_un_dict():
+    """TypeError en plena corrida = episodio perdido (medido 2026-11-05)."""
+    assert llm._sin_razonamiento({"respuesta": "x"}) == ""
+    assert llm._sin_razonamiento("<reasoning>a</reasoning>b") == "b"
+
+
+def test_el_tiempo_local_es_proporcional_al_pedido(monkeypatch):
+    """240 s FIJOS por lote de factcheck congelaron 40 minutos de corrida (medido 2026-11-05)."""
+    monkeypatch.setattr(config, "LLM_LOCAL_TIMEOUT_S", 240)
+    chico = {"messages": [{"role": "user", "content": "x" * 800}]}
+    lote = {"messages": [{"role": "system", "content": "x" * 6000},
+                         {"role": "user", "content": "y" * 500}]}
+    assert llm._timeout_local(chico) >= 45, "un prompt chico tiene su chance local"
+    assert llm._timeout_local(lote) < 90, "un lote grande no puede tener secos 4 minutos"
+    assert llm._timeout_local({"messages": [{"content": "x" * 400000}]}) == 240, "respeta el techo"
+    assert llm._timeout_local({}) == 45

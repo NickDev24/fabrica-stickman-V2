@@ -128,6 +128,20 @@ def cache_put(provider: str, payload: dict, text: str) -> None:
 TRANSITORIOS = {429, 500, 502, 503, 504}
 
 
+def _timeout_local(payload: dict) -> int:
+    """Tiempo del modelo local, proporcional al pedido (no un techo fijo de 4 minutos).
+
+    Medido 2026-11-05 en la corrida diaria: factcheck manda lotes de ~6.000 caracteres y
+    deepseek-r1:1.5b en 2 núcleos NO los termina nunca; cada lote agotaba los 240 s y
+    terminaba respondiendo Cloudflare en 1 s. Diez lotes = 40 minutos de reloj para
+    exactamente nada. Con un techo proporcional, un prompt chico local sigue teniendo su
+    chance y un prompt grande pasa al siguiente proveedor en un minuto.
+    """
+    caracteres = sum(len(str(m.get("content") or "")) for m in payload.get("messages") or [])
+    segundos = 30 + caracteres // 200               # ~30 s base + 5 s cada 1.000 caracteres
+    return int(max(45, min(config.LLM_LOCAL_TIMEOUT_S, segundos)))
+
+
 def _post(url: str, payload: dict, headers: dict, name: str) -> tuple:
     """(Response|None, error). Reintenta SOLO fallos transitorios con backoff exponencial.
 
@@ -143,11 +157,15 @@ def _post(url: str, payload: dict, headers: dict, name: str) -> tuple:
     for n in range(intentos):
         retry_after = 0.0
         try:
-            timeout = (config.LLM_LOCAL_TIMEOUT_S if name == "ollama"
+            timeout = (_timeout_local(payload) if name == "ollama"
                        else config.LLM_TIMEOUT_S)
             r = requests.post(url, json=payload, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
             ultimo = f"error de red: {exc.__class__.__name__}"
+            if name == "ollama":
+                # Sin esta línea el corte del modelo local era invisible: la fábrica
+                # tardaba minutos de más y state/proveedores.json no decía por qué.
+                _health_record(name, "lento", f"sin respuesta en {timeout}s ({ultimo})")
         else:
             if r.status_code < 400:
                 return r, ""
@@ -169,12 +187,29 @@ def _post(url: str, payload: dict, headers: dict, name: str) -> tuple:
     return None, f"{ultimo} (tras {intentos} intentos)"
 
 
+def _contenido_de(choice: dict):
+    """El texto de un choice, venga como venga.
+
+    OpenAI/Cloudflare: message.content = str. Ollama con modelos de razonamiento lo
+    devuelve como objeto (content/reasoning_content) y un regex sobre un dict revienta
+    la corrida entera (TypeError en factcheck, medido 2026-11-05).
+    """
+    texto = (choice.get("message") or {}).get("content", "")
+    if isinstance(texto, dict):
+        texto = texto.get("content") or texto.get("text") or ""
+    if not isinstance(texto, str):
+        return ""
+    return texto
+
+
 def _sin_razonamiento(texto: str) -> str:
     """Saca el bloque <reasoning>...</reasoning> que gpt-oss escribe dentro de "content".
 
     Un <reasoning> sin cierre significa que max_tokens se agotó razonando y la respuesta
     nunca empezó: eso no es texto útil, es una llamada que hay que volver a pedir.
     """
+    if not isinstance(texto, str):
+        return ""
     limpio = _REASONING.sub("", texto)
     if "<reasoning>" in limpio or "<think>" in limpio:
         return ""
@@ -199,9 +234,13 @@ def _iniciar_ollama_si_hace_falta() -> str:
     if not exe:
         return "Ollama local no está instalado"
     try:
+        # El daemon que levanta la fábrica hereda el contexto pedido: /v1 no acepta
+        # options.num_ctx por request, así que la única vía es arrancarlo con el valor.
+        entorno = {**os.environ,
+                   "OLLAMA_CONTEXT_LENGTH": os.environ.get("OLLAMA_CONTEXTO_TOKENS", "4096")}
         subprocess.Popen([exe, "serve"], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+                         env=entorno, start_new_session=True)
     except OSError as exc:
         return f"no se pudo iniciar Ollama ({exc.__class__.__name__})"
     for _ in range(60):
@@ -273,9 +312,25 @@ def _registrar_gasto_extra(costo_usd: float, detalle: str) -> None:
         pass
 
 
+def _tokens_aprox(mensajes: list[dict]) -> int:
+    """Estimación basta (español ≈ 3,2 caracteres/token) para no pedir lo que no entra."""
+    return sum(len(str(m.get("content", ""))) for m in mensajes) // 3 + 8 * len(mensajes)
+
+
+def _techo_local(max_tokens: int, mensajes: list[dict]) -> int:
+    """Recorta la salida pedida al contexto REAL del modelo local.
+
+    Ollama por /v1 ignora options.num_ctx (medido: 7.209 tokens -> HTTP 400 con
+    n_ctx=4096), así que el único que puede respetar el techo es quien arma el payload.
+    Sin esto cualquier guion largo moría en el fallback local.
+    """
+    techo = int(os.environ.get("OLLAMA_CONTEXTO_TOKENS", "4096"))
+    disponible = techo - _tokens_aprox(mensajes) - 32
+    return max(120, min(max_tokens, disponible))
+
+
 def _call_provider(name: str, messages: list[dict], temperature: float,
                    max_tokens: int) -> tuple[dict | None, str]:
-    import os
     cfg = config.PROVIDERS[name]
     if name == "cloudflare":
         cfg = config.cloudflare_cfg()
@@ -295,6 +350,12 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
         return None, f"sin {cfg.get('key_env', 'key')}"
     if name == "aionlabs" and os.environ.get("ALLOW_AIONLABS", "").strip().lower() not in ("1", "true", "yes", "on"):
         return None, "proveedor remoto desactivado por costo potencial (ALLOW_AIONLABS no está habilitado)"
+    if name == "ollama":
+        pedido = max_tokens
+        max_tokens = _techo_local(max_tokens, messages)
+        if max_tokens < pedido:
+            print(f"  ollama: salida recortada {pedido} -> {max_tokens} tokens "
+                  f"(contexto {os.environ.get('OLLAMA_CONTEXTO_TOKENS', '4096')})")
     payload = {"model": cfg["model"], "messages": messages,
                "temperature": temperature, "max_tokens": max_tokens,
                **(cfg.get("params") or {})}
@@ -323,12 +384,18 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
         if not body.get("success"):
             return None, f"cloudflare sin success: {str(body.get('errors'))[:150]}"
         result = body.get("result") or {}
-        text = result.get("response", "") if isinstance(result, dict) else ""
+        # Workers AI cambió de formato: @cf/meta/llama-3.1-8b-* devuelve adentro de result
+        # un chat.completion de OpenAI (medido 2026-11-05). Leer sólo result.response daba
+        # vacío y tiraba toda la corrida al modelo local de 1.5B.
+        if isinstance(result, dict) and result.get("choices"):
+            text = _contenido_de(result["choices"][0])
+        else:
+            text = result.get("response", "") if isinstance(result, dict) else ""
     else:
         choices = body.get("choices") or []
         if not choices:
             return None, "respuesta sin choices"
-        text = choices[0].get("message", {}).get("content", "")
+        text = _contenido_de(choices[0])
     text = _sin_razonamiento(text)
     if not text or not text.strip():
         return None, "respuesta vacía (el presupuesto se fue en razonamiento)"
@@ -339,31 +406,39 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
     return {"text": text, "latency": latency, "cost": 0.0, "cache": False}, None
 
 
+def _habilitado(nombre: str) -> bool:
+    """Si la bandera de entorno del proveedor está prendida; los que no la tienen no piden permiso."""
+    bandera = config.HABILITADOR.get(nombre)
+    if bandera is None:
+        return True
+    return os.environ.get(bandera, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def ruta_de(task: str) -> list[str]:
+    """La ruta declarada en config, filtrada por lo que el entorno permite usar hoy."""
+    route = [p for p in (config.TASK_ROUTES.get(task) or config.TASK_ROUTES["default"])
+             if _habilitado(p)]
+    if task in config.TAREAS_PREMIUM and _habilitado("gemini") and "gemini" not in route:
+        route = ["gemini", *route]
+    return route or ["ollama"]
+
+
 def chat(messages: list[dict], *, temperature: float = 0.4, max_tokens: int = 1500,
-         tag: str = "", episode: str = "", task: str = "default") -> str:
+         tag: str = "", episode: str = "", task: str = "") -> str:
     """Recorre la ruta de la tarea y devuelve el texto de la primera respuesta exitosa.
 
     Acá sólo se conmuta de proveedor; el reintento de lo transitorio vive en `_post`
     (mismo proveedor, backoff exponencial). Antes había un segundo bucle de reintento
     encima y se multiplicaban las llamadas (5 x 3 = 15 por proveedor), congelando una
     corrida entera en una máquina de 2 núcleos.
+
+    El dinero es la excepción, no el default: la ruta la manda config.TASK_ROUTES y las
+    banderas de entorno sólo deciden si un nombre del listado existe. Gemini encabeza
+    únicamente las tareas premium (config.TAREAS_PREMIUM); para el resto la corrida es
+    gratis de punta a punta y se corta antes que seguir gastando.
     """
-    route = list(config.TASK_ROUTES.get(task) or config.TASK_ROUTES["default"])
-    import os
-    on = lambda k: os.environ.get(k, "").strip().lower() in ("1", "true", "yes", "on")
-    remote: list[str] = []
-    if on("ALLOW_REMOTE_LLM"):
-        remote = ["mistral", "qwen", "cloudflare"]
-        if on("ALLOW_AIONLABS"):
-            remote.insert(2, "aionlabs")
-        if on("ALLOW_PAID_LLM"):
-            remote.append("bedrock")
-    if on("ALLOW_PAID_LLM"):
-        # opt-in pago: Gemini destapa primero (rápido, y su saldo dura meses con el
-        # tope GEMINI_PRESUPUESTO_USD_MES); los gratis quedan de respaldo
-        route = ["gemini", *remote, "ollama"]
-    elif remote:
-        route = [*remote, "ollama"]
+    task = task or config.tarea_para_tag(tag)
+    route = ruta_de(task)
     failures = []
     for name in route:
         result, err = _call_provider(name, messages, temperature, max_tokens)
@@ -388,7 +463,7 @@ def chat_json(messages: list[dict], **kw):
     """chat() + parseo JSON con reintentos: los gates no pueden depender de un formateo perfecto."""
     import json as _json
     import re as _re
-    task = kw.pop("task", "default")
+    task = kw.pop("task", "")
     last = None
     for _ in range(3):
         answer = chat(messages, task=task, **kw)

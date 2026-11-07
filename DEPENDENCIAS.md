@@ -21,15 +21,18 @@ Verificado el 2026-11-03 sobre esta máquina (Pentium B950, 2 núcleos, 11 GiB, 
 
 | Repo | Licencia | Decisión |
 |---|---|---|
-| `mesh-avatar-studio/` | MIT (Yuki Shindo) | **No se usa para el avatar GLB.** Es un motor WebGL2 propio de mallas 2D deformadas en CPU, no carga GLB. Su `npm run render-poses` (Playwright) sirve como referencia de captura por poses si algún día se pivotea a 2.5D con ese motor. Requiere `npm install` (hoy no está instalado). |
-| `avatarstudio/` | BSD-3 | **Descartado.** Es el repo del paper (3D desde texto sobre threestudio/GET3D); sin código utilitable y exige GPU NVIDIA. |
-| `OpenMontage/` | **AGPLv3** | **Descartado para el pipeline de producción.** Licencia viral de red: importarlo obligaría a abrir el código del proyecto. Solo se usa como lectura de patrones. |
-| `awesome-opus5-5-videos/` | MIT | Catálogo de prompts; no aporta render. |
-| `Scrapling/` | BSD-3 | **Integrado como librería instalada** (`scrapling` 0.5 en el venv) para la lectura de fuentes. Ver "Integraciones de esta sesión". |
-| `OpenCreator/` | ver su LICENSE | Ajeno a la fábrica de avatar; no se toca. |
-| `Stickman-Studio/` | Apache-2.0 | **No se importa código.** Se copia el patrón de reintento (tenacity: `RETRY_MAX_ATTEMPTS`/`RETRY_BASE_DELAY`) a `pipeline/llm.py`. Su `tts_engine.py` usa edge-tts y sus fases usan Gemini/Imagen/Veo (pagos): fuera del objetivo "100 % free". Su `.env` tiene un service-account JSON en claro al lado del repo (`stickman-studio-key.json`): riesgo de credencial, no de licencia. |
-| `stick/` | GPL-3.0-or-later | **Editor autónomo; no se copia ni importa código** en la fábrica. Puede utilizarse manualmente para crear/editar animaciones y exportarlas como material propio. El repositorio es un editor interactivo, no un renderizador por lotes autónomo. |
-| `stick-gen/` | Prosocial Public License PPL-3% actual; contiene licencia MIT para versiones históricas identificadas explícitamente | **No se integra al pipeline ni se instala.** No hay checkpoint de modelo en el clon; la inferencia declara uso procedural y la integración de motion generado con su renderer sigue incompleta. La PPL incluye una participación de 3% para usuarios comerciales que superen USD 1M de ingresos globales anuales; revisar la licencia vinculante antes de uso comercial. |
+| `../repos-videos/mesh-avatar-studio/` | MIT (Yuki Shindo) | **No se usa para el avatar GLB.** Es un motor WebGL2 propio de mallas 2D deformadas en CPU, no carga GLB. Su `npm run render-poses` (Playwright) sirve como referencia de captura por poses si algún día se pivotea a 2.5D con ese motor. Requiere `npm install` (hoy no está instalado). |
+| `../repos-videos/avatarstudio/` | BSD-3 | **Descartado.** Es el repo del paper (3D desde texto sobre threestudio/GET3D); sin código utilizable y exige GPU NVIDIA. |
+| `../repos-videos/OpenMontage/` | **AGPLv3** | **Descartado para el pipeline de producción.** Licencia viral de red: importarlo obligaría a abrir el código del proyecto. Solo se usa como lectura de patrones. |
+| `../repos-videos/awesome-opus5-5-videos/` | MIT | Catálogo de prompts; no aporta render. |
+| `../repos-videos/Scrapling/` | BSD-3 | **Integrado como librería instalada** (`scrapling` 0.5 en el venv) para la lectura de fuentes. Ver "Integraciones de esta sesión". |
+| `../repos-videos/OpenCreator/` | ver su LICENSE | Ajeno a la fábrica de avatar; se conserva fuera del directorio de producción. |
+| `../repos-videos/Stickman-Studio/` | Apache-2.0 | **No se importa código.** Se copia el patrón de reintento (tenacity: `RETRY_MAX_ATTEMPTS`/`RETRY_BASE_DELAY`) a `pipeline/llm.py`. Sus fases usan servicios pagos, fuera del objetivo "100 % free". |
+| `../repos-videos/stick/` | GPL-3.0-or-later | **Editor autónomo; no se copia ni importa código** en la fábrica. Puede utilizarse manualmente para crear/editar animaciones y exportarlas como material propio. El repositorio es un editor interactivo, no un renderizador por lotes autónomo. |
+| `../repos-videos/stick-gen/` | Prosocial Public License PPL-3% actual; contiene licencia MIT para versiones históricas identificadas explícitamente | **No se integra al pipeline ni se instala.** No hay checkpoint de modelo en el clon; la inferencia declara uso procedural y la integración de motion generado con su renderer sigue incompleta. La PPL incluye una participación de 3% para usuarios comerciales que superen USD 1M de ingresos globales anuales; revisar la licencia vinculante antes de uso comercial. |
+| `../repos-videos/google-cloud-sdk/` | Apache-2.0 | SDK de sistema movido fuera del árbol de producción; la fábrica no lo invoca directamente. |
+| `stickman-video-director/` | MIT | Se conserva en la raíz: sus pautas de gancho, metáforas y dirección editorial se usan como referencia de diseño en la fábrica. No se importa como dependencia de ejecución. |
+| `youtube-mcp/` | MIT | Servidor MCP conservado dentro del repo e integrado en la generación de ideas como contexto competitivo de videos/títulos. No altera el score medido ni verifica hechos. La fábrica fuerza modo sin embeddings: no llama a Google para generar vectores ni guarda búsquedas semánticas. |
 
 ## Integraciones de esta sesión (investigación + resiliencia LLM)
 
@@ -44,6 +47,51 @@ Verificado el 2026-11-03 sobre esta máquina (Pentium B950, 2 núcleos, 11 GiB, 
   pestaña). Se usa sólo `scrapling.parser` + `curl_cffi`, que cubre el caso real de la fábrica
   (fuentes estáticas de `.gov`/`.edu`/prensa) sin tocar el presupuesto de RAM del render.
 - **Sin credenciales nuevas:** ninguna de estas dos integraciones llama a un servicio pago.
+
+## Dockerización de la fábrica (2026-11-06)
+
+| Pieza | Versión | Licencia | Rol | Estado |
+|---|---|---|---|---|
+| Imagen `python:3.13-slim` | trixie | PSF License 2 solo runtime | base del contenedor `factory` | build verificado |
+| FFmpeg en contenedor (apt trixie) | 7.x | LGPL/GPL según build | composición, mezcla, −14 LUFS | operativo |
+| `tesseract-ocr` en contenedor (apt) | 5.x | Apache-2.0 | OCR que usa `pipeline/cutout.py` vía pytesseract | operativo |
+| `aiohttp` | >=3.11 <4 | Apache-2.0 | REST + WebSocket de `docker/factory/factoryd.py` | operativo |
+| `psutil` | >=6.0 <8 | BSD-3 | métricas CPU/RAM del contenedor para el dashboard | operativo |
+| Imagen `nginx:1.27-alpine` | alpine | BSD-2-Clause | sirve el Mission Control y proxya /api /ws /img | operativo |
+| Dashboard web | propia | propietario del repo | vanilla JS/CSS sin dependencias npm | operativo |
+
+- El repo completo se **monta por bind en /app** (no se copia dentro de la imagen), así que
+  los edits en caliente no requieren rebuild.
+- `~/piper-env` y `~/.local/bin` se montan con **la misma ruta del host** (`HOME=/home/facu`
+  en el contenedor) para que `pipeline/config.py` resuelva Piper/edge-tts sin cambios.
+- El reciclado de keyframes (`KF_RECICLADO_CADA`, default 2) divide a la mitad las llamadas
+  a Workers AI reutilizando la última imagen del mismo escenario entre beats consecutivos;
+  cada beat conserva su cámara propia (zoompan) y no se recicla si cambia la escena o es el
+  beat gancho. Regla de calidad, decisión del dueño.
+
+## Motor de render 3D: Babylon reemplaza a Three.js (2026-11-06, decisión del dueño)
+
+| Pieza | Versión | Licencia | Rol | Estado verificado |
+|---|---|---|---|---|
+| Babylon.js `babylon.js` UMD | 9.33.3 | MIT | motor WebGL de `factory/render/actor_page.html` (actor 4F, rig, visemas, cámara) | Smoke test via cdp.mjs: 6/6 frames, 0 frames negros |
+| Babylon loaders UMD | 9.33.3 | MIT (loader glTF) | carga del GLB del avatar | pendiente de prueba con GLB real |
+| Three.js r169 + GLTFLoader r169 | r169 | MIT | **movidos a `factory/render/vendor/legacy/`**; ya no los carga ninguna página activa (`actor_page_render.html` también archivado ahí) | archivos preservados, no destruidos |
+
+### A/B medido en el smokesh (mismo driver cdp.mjs, 6 frames, timeline sintética, SwiftShader)
+
+| Métrica | Three.js r169 | Babylon 9.33.3 |
+|---|---|---|
+| carga inicial | ~6 s | 5,9 s |
+| frame_ms mediana | 937 | 1026 |
+| frames negros | 0 | 0 |
+| RAM pico (árbol Chrome) | — | 2785 MB |
+
+Paridad de coste dentro del ruido de la bench en software GL; el contrato CDP
+(`actorInit/actorCargar/actorFrame/actorSnapshot/actorEstado`) queda intacto. Los morphs
+del GLB ahora registran `MorphTarget.influence` (Babylon) en vez de
+`morphTargetInfluences` (Three); rig por nodos usa `TransformNode` de Babylon. Los offsets
+de sombras parciales del casco procedural usan `slice`/`arc` + rotación (comentado en el
+código como perilla de calibración del visor).
 
 ## Decididas en FASE 1
 

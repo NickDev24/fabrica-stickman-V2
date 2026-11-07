@@ -7,7 +7,6 @@
 Funciones para mezclar, normalizar y generar la pista de audio con el actor 4F:
 - mezcla de voz (piper) + música + efectos sonoros (SFX)
 - normalización del audio
-- generación de subtítulos sincronizados
 - exportar a formato WAVE/MP3
 
 Sin dependencias externas: solo numpy, scipy, wave.
@@ -36,7 +35,7 @@ MERGER = {
     "ambient": 0.1,
 }
 
-# Secuencia de efectos de audio (sonidos y subtítulos)
+# Secuencia de efectos de audio
 EFFECTS = {
     "ambient": {
         "name": "Ambiente",
@@ -45,10 +44,6 @@ EFFECTS = {
     "sfx": {
         "name": "Sonido de fondo",
         "params": {"volume": 0.1, "duration": 1.0, "type": "beep"},
-    },
-    "caption": {
-        "name": "Subtítulos",
-        "params": {"volume": 0.3, "duration": 0.1, "type": "text"},
     },
 }
 
@@ -101,32 +96,6 @@ def normalizar_audio(audio: list[float], target: float = 0.95) -> list[float]:
     if max_val > 0:
         return [a / max_val * target for a in audio]
     return audio
-
-
-def generar_subtitulos(partitura: list[dict], output: str) -> None:
-    """Genera subtítulos sincronizados con la voz del actor."""
-    import io
-    import wave
-
-    with wave.open(output, "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(16000)
-        wf.writeframes(b"")
-
-    # Subtítulos por palabra con tiempo
-    # Cargar la partitura y generar subtítulos
-    # El sistema genera subtítulos en formato texto
-    lines = []
-    t = 0.0
-    for p in partitura:
-        if p["tipo"] == "silaba":
-            t += p["duracion"]
-            lines.append(f"{t:.3f}\t{p['texto']}")
-
-    with open(output, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    return len(lines)
 
 
 if __name__ == "__main__":

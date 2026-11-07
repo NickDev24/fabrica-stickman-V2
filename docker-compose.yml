@@ -1,0 +1,60 @@
+# PULSO · Fábrica de contenido — dockerizada (decisión del dueño, 2026-11-06)
+#
+#   factory   → python 3.13 + ffmpeg + tesseract + la pila exacta del .venv del host.
+#               Ejecuta factoryd (REST :8610 + WebSocket /ws) y corre `pipeline.run auto`
+#               en loop 24/7 (reciclado de imágenes activo: mitad de generación).
+#   dashboard → nginx con el Mission Control (http://localhost:8611).
+#
+# Los montajes usan EL MISMO path que en el host (HOME=/home/facu) para que
+# pipeline/config.py resuelva Piper y edge-tts sin tocar una línea de código.
+
+services:
+  factory:
+    build:
+      context: ./docker/factory
+      dockerfile: Dockerfile
+    image: pulso-factory:latest
+    container_name: pulso-factory
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      HOME: /home/facu
+      PYTHONUNBUFFERED: "1"
+      # ollama corre en el host, no dentro del contenedor:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      # interruptor del reciclado (2 = mitad de imágenes; 1 = comportamiento clásico)
+      KF_RECICLADO_CADA: "2"
+      # publicación autónoma diaria (YouTube máster + Facebook reel vía Zernio).
+      # Orden del dueño 2026-11-06: la fábrica publica sola; los gates de QC,
+      # título y flag sintético siguen operativo como cinturón de seguridad.
+      FACTORY_PUBLISH: "${FACTORY_PUBLISH:-1}"
+    command: ["python", "/app/docker/factory/factoryd.py"]
+    volumes:
+      - .:/app
+      # Piper y edge-tts: montados con su ruta original para no romper config.py
+      - /home/facu/piper-env:/home/facu/piper-env
+      - /home/facu/.local/bin:/home/facu/.local/bin
+    ports:
+      - "8610:8610"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request as u; u.urlopen('http://127.0.0.1:8610/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  dashboard:
+    build:
+      context: ./docker/dashboard
+      dockerfile: Dockerfile
+    image: pulso-dashboard:latest
+    container_name: pulso-dashboard
+    restart: unless-stopped
+    depends_on:
+      - factory
+    ports:
+      - "8611:80"     # único puerto del dashboard (la API interna vive en 8610)

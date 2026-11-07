@@ -18,13 +18,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
 import requests
 
-from .. import config, llm
+from .. import config, cutout, llm
 from ..episode import Episode
 
 # ---------------------------------------------------------------- radios de licencia
@@ -46,15 +47,20 @@ def _wikimedia_search(query: str, ns: int = 6, max_results: int = 12) -> list[di
         "prop": "imageinfo", "iiprop": "url|extmetadata|size",
         "iiurlwidth": 1200, "format": "json", "formatversion": 2,
     }
-    try:
-        r = requests.get(url, params=params,
-                         headers={"User-Agent": "PulsoCurioso/1.0 (contact mediastudio)"},
-                         timeout=25)
-        if r.status_code != 200:
+    for intento in range(2):
+        try:
+            r = requests.get(url, params=params,
+                             headers={"User-Agent": "PulsoCurioso/1.0 (contact mediastudio)"},
+                             timeout=25)
+            if r.status_code == 429 and intento == 0:
+                time.sleep(3)   # rate limit momentáneo de Commons: un re-intento y listo
+                continue
+            if r.status_code != 200:
+                return []
+            pages = r.json().get("query", {}).get("pages", [])
+            break
+        except requests.RequestException:
             return []
-        pages = r.json().get("query", {}).get("pages", [])
-    except requests.RequestException:
-        return []
     out: list[dict[str, Any]] = []
     for p in pages:
         title = p.get("title", "")
@@ -138,6 +144,78 @@ def proponer(ep: Episode) -> dict:
     return out
 
 
+def aprobar(ep: Episode, indices: list[int] | None = None) -> dict:
+    """Aprobación del dueño: baja/recicla las imágenes de la propuesta y marca qué entra.
+
+    `indices` vacío = todos los recortes viables. Cada imagen baja UNA vez y queda en
+    assets/cutouts con su licencia registrada en collage_layer.json (dinero real: cero).
+    """
+    propuesta = ep.read_json("cutout_propuesta.json") or {}
+    recs = buscar_y_bajar(ep, propuesta)
+    sel = {int(i) for i in (indices or range(len(recs)))}
+    for j, r in enumerate(recs):
+        r["aprobado"] = j in sel
+    ep.write_json("collage_layer.json", {"recortes": recs,
+                                          "fecha": time.strftime("%Y-%m-%d %H:%M:%S")})
+    ok = sum(1 for r in recs if r.get("aprobado") and str(r.get("estado", "")).startswith("ok"))
+    print(f"  collage: {ok}/{len(recs)} recortes aprobados con imagen local lista")
+    return {"recortes": recs, "aprobados": ok}
+
+
+# mapeo tipo (LLM) → tema de encuadre (cutout.procesar_recorte) → ancho/banda en pantalla
+_TEMA = {"personaje": "persona", "persona": "persona", "gente": "persona",
+         "retrato": "persona", "documento": "documento", "carta": "documento",
+         "papel": "documento", "lugar": "lugar", "edificio": "lugar", "escena": "lugar",
+         "objeto": "objeto", "estatua": "objeto", "artefacto": "objeto"}
+_ANCHO = {"persona": 320, "documento": 430, "lugar": 460, "objeto": 290}
+
+
+def render(ep: Episode) -> Path | None:
+    """Compone los recortes aprobados sobre el master → renders/<slug>-collage.mp4.
+
+    Colocación que respeta la escena stickman: banda superior (y=130) o tercio inferior
+    (y=690, zona baja segura de la plataforma), siempre AL LADO del centro para no
+    tapar al personaje principal. Idempotente: si el collage ya está renderizado y
+    collage_layer.json no cambió, no re-codifica.
+    """
+    layer = ep.read_json("collage_layer.json") or {}
+    recs = [r for r in layer.get("recortes", [])
+            if r.get("aprobado") and str(r.get("estado", "")).startswith("ok")
+            and r.get("archivo_local")]
+    if not recs:
+        print("  collage: no hay recortes aprobados — no-op (el master queda igual)")
+        return None
+    master = ep.dir / "renders" / f"{ep.slug}-keyframe.mp4"
+    if not master.exists():
+        raise SystemExit("collage: falta el master (corré 'keyframes' primero)")
+    total = json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json",
+         str(master)], capture_output=True, text=True).stdout)["format"]["duration"]
+    overlays = []
+    for j, r in enumerate(recs):
+        tema = _TEMA.get(str(r.get("tipo", "personaje")).lower(), "persona")
+        src = Path(r["archivo_local"])
+        png = cutout.procesar_recorte(src, src.with_suffix(".paper.png"), tema=tema)
+        w = min(int(r.get("w", 0)) or _ANCHO[tema], 300)
+        # banda superior compacta al costado de la cabeza del stickman (alternando
+        # lado por recorte); el dueño puede afinar x/y/w por recorte en collage_layer.json
+        if str(r.get("posicion", "arriba")) == "abajo":
+            x, y = (720 - w - 28), 660   # tercio inferior, fuera del área de controles
+        else:
+            lado_izq = j % 2 == 0
+            x = 28 if lado_izq else (720 - w - 28)
+            y = 64
+        x = int(r.get("x", x)); y = int(r.get("y", y)); w = int(r.get("w", w))
+        dur = max(2.0, min(float(r.get("dur_s", 5.0)), 8.0))
+        t0 = max(0.0, min(float(r.get("start_s", 0.0)), float(total) - dur))
+        overlays.append({"png": png, "t_start": round(t0, 2),
+                         "t_end": round(t0 + dur, 2), "x": x, "y": y, "w": w})
+    salida = cutout.aplicar_cutouts(ep, master, overlays)
+    print(f"  collage: {len(overlays)} recortes compuestos -> {salida.name} "
+          f"(licencias en collage_layer.json)")
+    return salida
+
+
 def buscar_y_bajar(ep: Episode, confirmado: dict[str, Any]) -> list[dict]:
     """Para cada recorte confirmado, busca en Commons candidatos y descarga el mejor."""
     if not confirmado.get("recortes"):
@@ -147,6 +225,18 @@ def buscar_y_bajar(ep: Episode, confirmado: dict[str, Any]) -> list[dict]:
         query = str(rec.get("query", "")).strip()
         if not query:
             continue
+        out = ep.dir / "assets" / "cutouts"
+        out.mkdir(parents=True, exist_ok=True)
+        # 1) reciclaje local PRIMERO (cero red, cero coste): si el dueño ya preparó
+        #    el archivo (archivo_local_hint) y existe, no se busca en Commons.
+        hint = str(rec.get("archivo_local_hint", "")).strip()
+        if hint:
+            local = out / hint
+            if local.exists() and local.stat().st_size > 8000:
+                recs.append({**rec, "estado": "ok_reciclado", "archivo_local": str(local),
+                             "license": "PD (archivo local del episodio)",
+                             "title": local.stem, "width": 0, "height": 0})
+                continue
         hits = _wikimedia_search(query, max_results=20)
         if not hits:
             recs.append({**rec, "estado": "sin_resultados"})
@@ -154,8 +244,6 @@ def buscar_y_bajar(ep: Episode, confirmado: dict[str, Any]) -> list[dict]:
         # mejor hit: mayor resolución con licencia saneada
         hits.sort(key=lambda h: h["width"] * h["height"], reverse=True)
         best = hits[0]
-        out = ep.dir / "assets" / "cutouts"
-        out.mkdir(parents=True, exist_ok=True)
         destino = out / f"{_query_hash(query)}.{best['url'].rsplit('.', 1)[-1][:6]}"
         if destino.exists() and destino.stat().st_size > 8000:
             print(f"  cutout cache: {destino.name}")

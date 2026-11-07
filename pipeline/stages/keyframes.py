@@ -12,8 +12,8 @@ se las mueve encima. Acá esa imagen la genera un modelo de difusión hosted gra
 sobre la foto fija (zoom/paneo/tumbo), que es exactamente lo que hace el formato.
 
 Cadena: script narrado -> beats (factory/acting/beats.py) -> 1 keyframe por beat ->
-plano con cámara -> hoja de contactos (antes de renderizar, para aprobar) -> concat ->
-subtítulos + palabra pop -> voz + cama musical + SFX por corte -> loudnorm -14 LUFS.
+plano con cámara -> hoja de contactos -> concat sin subtítulos -> voz + cama musical +
+SFX por corte -> loudnorm -14 LUFS.
 
 CPU-only, sin GPU, sin Blender, sin librerías de pago.
 """
@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import resource
 import subprocess
 import time
@@ -29,6 +30,7 @@ from pathlib import Path
 
 from .. import config, imagen
 from ..episode import Episode
+from factory import parametros
 
 # El máster documental nace en 9:16. Se conserva el presupuesto de píxeles
 # del anterior 1280x720 para que el B950 no multiplique el costo del render.
@@ -40,16 +42,31 @@ BASE_W, BASE_H = 810, 1440       # lienzo interno vertical antes de la cámara
 KF_S = 1024                       # flux devuelve 1024x1024
 KF_916_W = 576                    # recorte 9:16 nativo del cuadrado
 
+# La foto fija del stickman no se mueve sola: sin respiración el cuadro es un frame muerto
+# a 2,24 palabras/segundo. Los números viven en factory/acting/stickman_motion_rules.json.
+_MICRO = parametros.motion().get("micro_movement", {})
+_RESPIRAR = _MICRO.get("respiracion", {})
+RESPIRACION_PX = int(_RESPIRAR.get("desplazamiento_px", 8))
+RESPIRACION_S = float(_RESPIRAR.get("ciclo_s", 4.0))
+RESPIRACION_MIN_S = float(_RESPIRAR.get("aplicar_cuando_duracion_sMayor_a", 1.0))
+_QC_MICRO = _MICRO.get("qc", {})
+QC_MUESTREO_FPS = float(_QC_MICRO.get("muestreo_fps", 5.0))
+QC_UMBRAL_YDIF = float(_QC_MICRO.get("umbral_ydif", 0.005))
+QC_PROPORCION_MUERTA = float(_QC_MICRO.get("proporcion_max_muerta", 0.9))
+
 # Cámara: cada movimiento es una expresión de zoompan sobre la foto fija.
 # Los separadores SON dos puntos: dentro de un filtro, la coma cerraría zoompan y abriría
 # otro filtro, y ffmpeg revienta con "No option name near ..." (medido).
+# Piso de zoom 1,05 (antes 1,0 en push/pull): el recorte necesita holgura para poder oscilar.
+# Con zoom=1,0 la deriva de la respiración se clampa a 0 y el cuadro vuelve a ser un frame
+# muerto, que es justo lo que esta sección existe para evitar.
 CAMARA = {
-    "push":       "z='min(zoom+0.0007,1.08)'",
-    "push_lento": "z='min(zoom+0.0003,1.04)'",
-    "pull":       "z='if(eq(on,1),1.08,max(zoom-0.0007,1.0))'",
+    "push":       "z='1.05+0.03*on/{n}'",
+    "push_lento": "z='1.05+0.01*on/{n}'",
+    "pull":       "z='1.08-0.03*on/{n}'",
     "pan":        "z='1.06':x='(iw-iw/zoom)*on/{n}':y='ih/2-(ih/zoom/2)'",
     "shake":      "z='1.06':x='iw/2-(iw/zoom/2)+18*sin(on/2.2)':y='ih/2-(ih/zoom/2)+12*sin(on/1.4)'",
-    "fijo":       "z='1.03'",
+    "fijo":       "z='1.05'",
 }
 
 
@@ -61,12 +78,6 @@ def _dur(path: Path) -> float:
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "json", str(path)], capture_output=True, text=True)
     return float(json.loads(r.stdout)["format"]["duration"])
-
-
-def _ts(s: float) -> str:
-    h, r = divmod(max(0.0, s), 3600)
-    m, sec = divmod(r, 60)
-    return f"{int(h)}:{int(m):02d}:{sec:05.2f}"
 
 
 def _recorte(fps: bool = True) -> str:
@@ -81,7 +92,13 @@ def beats_de(ep: Episode, forzar: bool = False) -> list[dict]:
     """Beats desde el audio REAL de la narración; quedan en artifacts/beats.json."""
     guardado = ep.artifacts / "beats.json"
     if guardado.exists() and not forzar:
-        return json.loads(guardado.read_text(encoding="utf-8"))["beats"]
+        beats_guardados = json.loads(guardado.read_text(encoding="utf-8"))["beats"]
+        meta_guardada = ep.metadata()
+        contexto = " | ".join(str(meta_guardada.get(k, ""))
+                               for k in ("title", "angle", "categoria"))[:240]
+        for beat in beats_guardados:
+            beat["contexto_historia"] = contexto
+        return beats_guardados
     meta = ep.metadata()
     durations = meta.get("segment_durations_s")
     if not durations:
@@ -93,7 +110,9 @@ def beats_de(ep: Episode, forzar: bool = False) -> list[dict]:
         sys.path.insert(0, str(config.ROOT))
     from factory.acting import beats
     segmentos = [{"texto": t, "dur_s": d} for t, d in zip(segs, durations)]
-    planeados = beats.plan(segmentos, escena_base=meta.get("escena_base", "calle"))
+    contexto_historia = " | ".join(str(meta.get(k, "")) for k in ("title", "angle", "categoria"))
+    planeados = beats.plan(segmentos, escena_base=meta.get("escena_base", "calle"),
+                           contexto_historia=contexto_historia)
     beats.escribir(ep, planeados)
     if any("direccion" not in b for b in planeados):
         beats.dirigir(planeados)
@@ -120,35 +139,64 @@ def storyboard_md(ep: Episode, bs: list[dict]) -> Path:
 
 # ----------------------------------------------------------------------- keyframes
 def _preparar_keyframes(ep: Episode, bs: list[dict], *, modelo: str = "flux",
-                       forzar: bool = False) -> tuple[list[dict], dict]:
-    """Un keyframe por beat. Re-corrida no redrawa: la caché en disco congela al personaje."""
-    ok, por = imagen.disponible()
-    if not ok:
-        raise SystemExit(f"keyframes: motor de imágenes no configurado ({por})")
+                       forzar: bool = False, reciclar: bool = False,
+                       renovar: set[int] | None = None) -> tuple[list[dict], dict]:
+    """Un keyframe por beat. Re-corrida no redrawa: la caché en disco congela al personaje.
+
+    Modo ahorro (decisión del dueño, fábrica 24/7): KF_RECICLADO_CADA=N (default 2) genera
+    una imagen NUEVA cada N beats y al beat intermedio le copia la última imagen viva del
+    MISMO escenario. La calidad audiovisual no baja porque cada beat conserva su propio
+    movimiento de cámara (zoompan/deriva por beat): la misma ilustración con dos cámaras
+    distintas se lee como dos tomas. Se fuerza imagen nueva en: beat gancho, cambio de
+    escenario, forzado --forzar/--renovar, o sin imagen previa reciclable."""
     carpeta = ep.dir / "assets" / "kf"
     carpeta.mkdir(parents=True, exist_ok=True)
     ruta: list[Path] = []
+    renovar = renovar or set()
     t0, nuevos = time.time(), 0
+    reciclados = 0
+    cada = max(1, int(os.environ.get("KF_RECICLADO_CADA", "2")))
+    ultima_viva: Path | None = None
+    escena_ultima = ""
+    desde_ultima = 0
     for b in bs:
         prompt = imagen.armar_prompt_dirigido(b)
         out = carpeta / f"kf-{b['i']:03d}.{imagen.extension(modelo)}"
         b["prompt"] = prompt
-        if out.exists() and not forzar:
+        renovar_este = forzar or int(b["i"]) in renovar
+        if out.exists() and not renovar_este:
+            ruta.append(out)
+            ultima_viva = out
+            escena_ultima = str(b.get("escena", ""))
+            continue
+        escena = str(b.get("escena", ""))
+        genera = (bool(b.get("gancho")) or renovar_este or ultima_viva is None
+                  or escena != escena_ultima or desde_ultima >= cada
+                  or not ultima_viva.exists())
+        if not genera:
+            out.write_bytes(ultima_viva.read_bytes())
+            reciclados += 1
+            desde_ultima += 1
             ruta.append(out)
             continue
-        imagen.generar(prompt, out, modelo=modelo, forzar=forzar,
-                       escena=str(b.get("escena", "")),
+        imagen.generar(prompt, out, modelo=modelo, forzar=renovar_este, reciclar=reciclar,
+                       escena=escena,
                        accion=str(b.get("accion", "")),
                        plano=str(b.get("plano", "")))
         nuevos += 1
+        desde_ultima = 0
+        escena_ultima = escena
+        ultima_viva = out
         ruta.append(out)
-    return bs, {"frames": len(ruta), "generados_nuevos": nuevos,
+    return bs, {"frames": len(ruta), "generados_nuevos": nuevos, "reciclados": reciclados,
                 "segundos_api": round(time.time() - t0, 1), "modelo": modelo, "rutas": ruta}
 
 
 def generar_keyframes(ep: Episode, bs: list[dict], *, modelo: str = "flux",
-                      forzar: bool = False) -> tuple[list[Path], dict]:
-    dirigidos, info = _preparar_keyframes(ep, bs, modelo=modelo, forzar=forzar)
+                      forzar: bool = False, reciclar: bool = False,
+                      renovar: set[int] | None = None) -> tuple[list[Path], dict]:
+    dirigidos, info = _preparar_keyframes(ep, bs, modelo=modelo, forzar=forzar,
+                                          reciclar=reciclar, renovar=renovar)
     return info["rutas"], info
 
 
@@ -217,7 +265,8 @@ def shotcard(ep: Episode, beats: list[dict], kfs: list[Path], nombre: str = "con
     return sheet
 
 
-def preview(ep: Episode, *, modelo: str = "flux", segundos: float = 35.0) -> dict:
+def preview(ep: Episode, *, modelo: str = "flux", segundos: float = 35.0,
+            reciclar: bool = False, renovar: set[int] | None = None) -> dict:
     """Render de revisión breve, conserva el master y sus artefactos independientes."""
     from .narracion import _segments
     t0 = time.time()
@@ -247,14 +296,21 @@ def preview(ep: Episode, *, modelo: str = "flux", segundos: float = 35.0) -> dic
     script_segs = _segments(ep.read_text("script.txt"))[:len(seleccion)]
     duraciones = [_dur(p) for p in seleccion]
     from factory.acting import beats as planner
-    bs = planner.plan([{"texto": txt, "dur_s": d} for txt, d in zip(script_segs, duraciones)])
+    meta = ep.metadata()
+    contexto = " | ".join(str(meta.get(k, "")) for k in ("title", "angle", "categoria"))
+    bs = planner.plan([{"texto": txt, "dur_s": d} for txt, d in zip(script_segs, duraciones)],
+                      contexto_historia=contexto)
     kfs = []
     stats = {"generados_nuevos": 0}
+    renovar = renovar or set()
     for b in bs:
         prompt = imagen.armar_prompt_dirigido(b)
         out = ep.dir / "assets/kf" / f"{ep.slug}-preview-{b['i']:03d}.{imagen.extension(modelo)}"
         out.parent.mkdir(parents=True, exist_ok=True)
-        imagen.generar(prompt, out, modelo=modelo)
+        # Reusar el caché del motor; una vista previa repetida no debe gastar cuota dos veces.
+        imagen.generar(prompt, out, modelo=modelo, forzar=int(b["i"]) in renovar,
+                       reciclar=reciclar, escena=str(b.get("escena", "")),
+                       accion=str(b.get("accion", "")), plano=str(b.get("plano", "")))
         b["prompt"] = prompt
         kfs.append(out)
     stats["frames"] = len(kfs)
@@ -270,15 +326,10 @@ def preview(ep: Episode, *, modelo: str = "flux", segundos: float = 35.0) -> dic
     silent=ep.dir / "renders/preview-silent.mp4"
     _run(["ffmpeg","-y","-v","error","-f","concat","-safe","0","-i",str(order),"-c","copy",str(silent)])
     cama=_cama(ep,dur); sfx=_sfx(ep,bs); mezcla=_mezcla(ep,audio_preview,cama,sfx)
-    from .montaje import validar_ass
-    subs=ep.dir / "assets/sub" / "preview.ass"
-    subs.parent.mkdir(parents=True,exist_ok=True)
-    subs.write_text(_ass_texto(bs),encoding="utf-8")
-    validar_ass(subs)
     normal=_normalizador(mezcla)
     salida=ep.dir / "renders" / f"{ep.slug}-preview.mp4"
     _run(["ffmpeg","-y","-v","error","-i",str(silent),"-i",str(mezcla),"-filter_complex",
-          f"[0:v]subtitles={subs}[v];[1:a]{normal}[a]","-map","[v]","-map","[a]",
+          f"[1:a]{normal}[a]","-map","0:v:0","-map","[a]",
           "-c:v","libx264","-preset",str(config.FFMPEG_PRESET),"-crf",str(config.FFMPEG_CRF),
           "-pix_fmt","yuv420p","-r",str(KF_FPS),"-c:a","aac","-b:a","128k","-ar","44100",
           "-shortest","-movflags","+faststart",str(salida)])
@@ -299,10 +350,27 @@ def preview(ep: Episode, *, modelo: str = "flux", segundos: float = 35.0) -> dic
 
 
 # ------------------------------------------------------------------------- planos
+def _deriva(i: int) -> str:
+    """Expresión de desplazamiento vertical (px) para la respiración del plano.
+
+    La fase se corre por índice de beat: si dos planos seguidos respiran al unísono el
+    cerebro lo lee como temblor de cámara, no como vida.
+    """
+    ciclo = max(2.0, RESPIRACION_S) * KF_FPS
+    fase = (i % 5) * (2 * math.pi / 5)
+    return f"{RESPIRACION_PX}+{RESPIRACION_PX}*sin(2*PI*n/{ciclo:.0f}+{fase:.3f})"
+
+
 def _plano(b: dict, img: Path, out: Path) -> None:
     frames = max(1, int(round(b["dur_s"] * KF_FPS)))
     cam = CAMARA.get(b["mov"], CAMARA["fijo"]).format(n=max(1, frames - 1))
-    vf = f"{_recorte()},zoompan={cam}:d={frames}:s={W}x{H}:fps={KF_FPS}"
+    respira = b["dur_s"] > RESPIRACION_MIN_S
+    lienzo = (f"{W + 2 * RESPIRACION_PX}x{H + 2 * RESPIRACION_PX}" if respira else f"{W}x{H}")
+    vf = f"{_recorte()},zoompan={cam}:d={frames}:s={lienzo}:fps={KF_FPS}"
+    if respira:
+        # Se renderiza con 8 px de holgura por lado y se recorta el máster WxH desde una
+        # ventana que oscila: el cuadro termina exactamente en WxH y nunca está quieto.
+        vf += f",crop={W}:{H}:x={RESPIRACION_PX}:y='{_deriva(b['i'])}'"
     if "flash" in b.get("fx", []):
         vf += ",fade=t=in:st=0:d=0.10:color=white"
     _run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", str(img),
@@ -373,70 +441,6 @@ def _normalizador(meza: Path) -> str:
             f":offset={datos['target_offset']}:linear=true:print_format=summary")
 
 
-def _subtulos(ep: Episode, bs: list[dict]) -> Path:
-    """Un ASS global: la frase del beat abajo y la palabra pop gigante arriba.
-
-    Se quema en una sola pasada sobre el video concatenado, por eso los tiempos son
-    absolutos. Pasar por montaje.validar_ass no es decorativo: un Format corto quema
-    ",0,0,0,,palabra" en pantalla (el bug de pulso-001-main.mp4).
-    """
-    from .montaje import validar_ass
-    path = ep.dir / "assets" / "sub" / "keyframes.ass"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ev = []
-    for b in bs:
-        t0, t1 = _ts(b["t0"]), _ts(min(b["t1"], b["t0"] + b["dur_s"]))
-        frase = (b["texto"][:42] + "…") if len(b["texto"]) > 42 else b["texto"]
-        frase = r"{\q2}" + frase.replace("\\", "\\\\").replace("{", "").replace("}", "")
-        ev.append(f"Dialogue: 0,{t0},{t1},Default,,0,0,0,,{frase}")
-        # Sin POP: el texto queda sólo abajo, sin duplicar la frase arriba.
-    texto = f"""[Script Info]
-ScriptType: v4.00+
-WrapStyle: 2
-PlayResX: {W}
-PlayResY: {H}
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginV, Encoding
-Style: Default, DejaVu Sans, 39, &H00FFFFFF, &H00101010, &H80000000, 1, 0, 1, 3, 1, 2, 220, 1
-Style: POP, DejaVu Sans, 102, &H0000FFFF, &H00101010, &H80000000, 1, 0, 1, 7, 2, 8, 280, 1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-{chr(10).join(ev)}
-"""
-    validar_ass(texto, str(path))
-    path.write_text(texto, encoding="utf-8")
-    return path
-
-
-def _ass_texto(bs: list[dict]) -> str:
-    """ASS autocontenido para previews; no toca el subtítulo del master."""
-    ev=[]
-    for b in bs:
-        t0,t1=_ts(b["t0"]),_ts(min(b["t1"],b["t0"]+b["dur_s"]))
-        frase=(b["texto"][:42]+"…") if len(b["texto"])>42 else b["texto"]
-        frase=r"{\q2}"+frase.replace("\\","\\\\").replace("{","").replace("}","")
-        ev.append(f"Dialogue: 0,{t0},{t1},Default,,0,0,0,,{frase}")
-        # Sin POP: el texto queda sólo abajo, sin duplicar la frase arriba.
-    return f"""[Script Info]
-ScriptType: v4.00+
-WrapStyle: 2
-PlayResX: {W}
-PlayResY: {H}
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginV, Encoding
-Style: Default, DejaVu Sans, 39, &H00FFFFFF, &H00101010, &H80000000, 1, 0, 1, 3, 1, 2, 220, 1
-Style: POP, DejaVu Sans, 102, &H0000FFFF, &H00101010, &H80000000, 1, 0, 1, 7, 2, 8, 280, 1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-{chr(10).join(ev)}
-"""
-
-
-# ---------------------------------------------------------------------------- audio
 def _sfx(ep: Episode, bs: list[dict]) -> Path:
     """Un golpe/whoosh sintetizado por corte (duración exacta del beat, sonido en t=0).
 
@@ -489,7 +493,8 @@ def _cama(ep: Episode, segundos: float) -> Path:
 
 # ----------------------------------------------------------------------------- render
 def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
-           solo_contacto: bool = False) -> dict:
+           solo_contacto: bool = False, reciclar: bool = False,
+           renovar: set[int] | None = None) -> dict:
     """De script.txt + narración ya hecha a un MP4 keyframe terminado (o sólo la placa de contactos)."""
     t0 = time.time()
     uso_cpu_antes = resource.getrusage(resource.RUSAGE_SELF).ru_utime + resource.getrusage(resource.RUSAGE_SELF).ru_stime
@@ -497,22 +502,18 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     bs = beats_de(ep, forzar=forzar)
     if not bs:
         raise SystemExit("keyframes: el planificador no devolvió beats")
-    # Rótulos editoriales legibles se fijan antes de crear las imágenes de revisión.
+    # Este render omite títulos editoriales y subtítulos quemados.
     for b in bs:
-        prop = str((b.get("direccion") or {}).get("prop", ""))
-        if prop.startswith("2005 analyst report"): b["pop"] = "~30 ALERTAS"
-        elif prop.startswith("timeline from 1992"): b["pop"] = "6 QUEJAS"
-        elif prop.startswith("options market volume"): b["pop"] = "VOLUMEN IRREAL"
-        elif prop.startswith("investment returns chart"): b["pop"] = "DEMASIADO PERFECTO"
-        elif prop.startswith("clear three-part Ponzi"): b["pop"] = "NUEVOS → ANTERIORES"
-        elif prop.startswith("official securities fraud"): b["pop"] = "DICIEMBRE 2008"
+        b["pop"] = ""
     storyboard = storyboard_md(ep, bs)
-    bs, stats = _preparar_keyframes(ep, bs, modelo=modelo, forzar=forzar)
+    bs, stats = _preparar_keyframes(ep, bs, modelo=modelo, forzar=forzar,
+                                    reciclar=reciclar, renovar=renovar)
     kfs = stats.pop("rutas")
     sheet = hoja_contactos(ep, bs, kfs)
     densidad = round(60 * len(bs) / max(0.001, sum(b["dur_s"] for b in bs)), 1)
     print(f"  keyframes: {len(kfs)} imágenes ({stats['generados_nuevos']} nuevas, "
-          f"{stats['segundos_api']}s de API) | densidad {densidad}/min")
+          f"{stats.get('reciclados', 0)} recicladas, {stats['segundos_api']}s de API) "
+          f"| densidad {densidad}/min")
     print(f"  hoja de contactos: {sheet.relative_to(ep.dir)} — se adjunta al paquete de revisión")
     print(f"  storyboard: {storyboard.relative_to(ep.dir)}")
     ep.write_json("beats.json", {"beats": bs,
@@ -523,8 +524,8 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
                                         "listo_para_render": False})
         return {"contacto": str(sheet), "beats": len(bs), "renderizado": False}
 
-    # Único maestro de producción: keyframe 2.5D (silueta stickman + cámara FFmpeg +
-    # subtítulos + mezcla). La ruta del brief: 30-40 imágenes/min, sin render 3D por
+    # Único maestro de producción: keyframe 2.5D (stickman + cámara FFmpeg + mezcla).
+    # La ruta del brief: 30-40 imágenes/min, sin render 3D por
     # fotograma. El maestro avatar (GLB con ojos y lipsync) fue DESCARTADO de esta ruta
     # por decisión del dueño: la fábrica sólo genera videos stickman.
     partes = ep.dir / "renders" / "kf-parts"
@@ -536,7 +537,8 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     previos = json.loads(huellas.read_text()) if huellas.exists() else {}
     pendientes = []
     for b, img in zip(bs, kfs):
-        marca = f"{img}:{b['dur_s']}:{b['mov']}:{b['plano']}:{','.join(b.get('fx', []))}"
+        st = img.stat()
+        marca = f"{img}:{st.st_mtime_ns}:{st.st_size}:{b['dur_s']}:{b['mov']}:{b['plano']}:{','.join(b.get('fx', []))}"
         out = partes / "k-{:03d}.mp4".format(b["i"])
         if previos.get(str(out)) == marca and out.exists():
             continue
@@ -579,14 +581,13 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     total = sum(b["dur_s"] for b in bs)
     sfx = _sfx(ep, bs)
     cama = _cama(ep, total)
-    sub = _subtulos(ep, bs)
     meza = _mezcla(ep, voz, cama, sfx, bs)
     nl = _normalizador(meza)
 
     salida = ep.dir / "renders" / f"{ep.slug}-keyframe.mp4"
     _run(["ffmpeg", "-y", "-v", "error", "-i", str(mudo), "-i", str(meza),
-          "-filter_complex", f"[0:v]subtitles={sub}[v];[1:a]{nl}[a]",
-          "-map", "[v]", "-map", "[a]",
+          "-filter_complex", f"[1:a]{nl}[a]",
+          "-map", "0:v:0", "-map", "[a]",
           "-c:v", "libx264", "-preset", str(config.FFMPEG_PRESET), "-crf", str(config.FFMPEG_CRF),
           "-pix_fmt", "yuv420p", "-r", str(KF_FPS), "-c:a", "aac", "-b:a", "128k",
           "-ar", "44100", "-ac", "2", "-shortest", "-movflags", "+faststart", str(salida)])
@@ -604,6 +605,7 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
         "esperado_s": round(total, 2), "resolucion": f"{medidos['ancho']}x{medidos['alto']}",
         "fps": KF_FPS, "beats": len(bs), "densidad_por_min": densidad,
         "modelo_imagen": modelo, "llamadas_api": stats["generados_nuevos"],
+        "imagenes_recicladas": stats.get("reciclados", 0),
         "segundos_api": stats["segundos_api"], "segundos_planos": planos_s,
         "segundos_total": round(wall_s, 1),
         "cpu_segundos": round(cpu_s, 1),
@@ -632,6 +634,24 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     return info
 
 
+def _frames_muertos(path: Path) -> float:
+    """Proporción de cuadros muestreados sin cambio de luma alguno.
+
+    Medido: un plano codificado con la foto realmente pegada no pasa de YDIF 0,0008 (piso de
+    ruido del códec); con la deriva de 8 px el mismo plano llega a 9,8. Por eso el umbral está
+    en 0,005 y la barrera en la PROPORCIÓN: el arte plano con zonas lisas tiene cuadros bajos
+    legítimos, y lo que aquí queremos atrapar es el episodio entero sin movimiento.
+    """
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vf",
+                        f"fps={QC_MUESTREO_FPS:g},signalstats,"
+                        f"metadata=print:key=lavfi.signalstats.YDIF", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    valores = [float(x) for x in re.findall(r"YDIF=([0-9.eE+-]+)", r.stderr)]
+    if not valores:
+        return 1.0
+    return round(sum(v <= QC_UMBRAL_YDIF for v in valores) / len(valores), 3)
+
+
 def _qc(path: Path, esperado: float) -> dict:
     """ffprobe + medición ebur128 real (no la promesa del filtro)."""
     info = json.loads(subprocess.run(
@@ -654,6 +674,9 @@ def _qc(path: Path, esperado: float) -> dict:
     problemas = []
     if "video" not in tipos or "audio" not in tipos:
         problemas.append("faltan streams")
+    muertos = _frames_muertos(path)
+    if muertos > QC_PROPORCION_MUERTA:
+        problemas.append(f"frame muerto: {muertos:.0%} de los cuadros muestreados sin movimiento")
     if (v.get("width"), v.get("height")) != (W, H):
         problemas.append(f"resolución {v.get('width')}x{v.get('height')} != {W}x{H}")
     if abs(dur - esperado) > 0.8:
@@ -663,4 +686,4 @@ def _qc(path: Path, esperado: float) -> dict:
     elif not (-16.0 <= lufs <= -12.0):
         problemas.append(f"loudness {lufs} LUFS fuera de -14 ±2")
     return {"duracion_s": round(dur, 2), "ancho": v.get("width"), "alto": v.get("height"),
-            "lufs": lufs, "problemas": problemas}
+            "lufs": lufs, "frames_muertos": muertos, "problemas": problemas}

@@ -263,7 +263,7 @@ def _hook_card(path: Path, title: str, first_text: str) -> Path:
     una imagen aparte: si el guion cambia, el hook cambia con él.
     """
     im = Image.open(path).convert("RGB")
-    # Lienzo 9:16 para que el texto quede lejos del subtítulo inferior.
+    # Lienzo 9:16 para mantener texto gráfico lejos de la interfaz inferior de las plataformas.
     canvas = Image.new("RGB", (1080, 1920), (0, 0, 0))
     s = max(canvas.width / im.width, canvas.height / im.height)
     im = im.resize((int(im.width * s), int(im.height * s)), Image.LANCZOS)

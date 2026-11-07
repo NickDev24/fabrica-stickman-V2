@@ -49,6 +49,12 @@ def checklist(ep: Episode) -> Path:
     manifest = ep.read_json("derivados-manifest.json")
     gates_out = meta.get("gates", gates.run_all_gates(ep.dir))
     title = ep.read_state()["title"]
+    from factory import parametros
+    motivos = gates.gate_titulo(title, *parametros.rango_titulo())
+    if motivos:
+        raise SystemExit(f"GATE TÍTULO BLOQUEA LA PUBLICACIÓN: {motivos[0]} — corregí el título "
+                         "en episode.json y volvé a correr la etapa (el guion ya reescribe el suyo; "
+                         "esta barrera atrapa los episodios anteriores a la regla).")
     subtitle = str(meta.get("angle") or "Pulso Curioso").strip()
     desc = f"{title}\n{subtitle}"
     yt_parts = "\n".join(f"  - {p['archivo']} ({p['duration_s']}s)" for p in manifest.get("yt_partes", []))
@@ -63,9 +69,10 @@ def checklist(ep: Episode) -> Path:
 - Título: `{title}`
 - Descripción lista para pegar:
 {desc}
-- Miniatura/portada: `derivados/portada.jpg` — imagen del clímax + pregunta gancho;
-  subirla como miniatura personalizada (es la imagen que frena el scroll y la que se ve en pausa)
-- [ ] Revisar video, fuentes, audio y subtítulos antes de subir
+- Miniatura: `derivados/portada-yt.jpg` (1280x720) — subir como miniatura personalizada;
+  sin ella YouTube elige un frame al azar y eso no frena el scroll
+- Portada vertical (Short/pausa): `derivados/portada.jpg`
+- [ ] Revisar video, fuentes, audio y legibilidad visual antes de subir
 - [ ] Marcar contenido alterado o sintético en YouTube Studio
 {fallback_note}
 
@@ -115,10 +122,23 @@ Estado de gates: {json.dumps(gates_out, ensure_ascii=False, indent=2)}
   verificar en https://www.facebook.com/business/help/1604287853035214 antes de fijar números.
 """, encoding="utf-8")
     ep.write_json("publicacion/descripciones.json", {"titulo": title, "descripcion": desc,
-                                                     "fuentes": fuentes})
+                                                     "fuentes": ep.read_state("fuentes", [])})
     ep.set_stage("publicacion", "checklist_listo")
     print(f"  checklist -> {path.relative_to(ep.dir)} | publicar sigue BLOQUEADO hasta aprobación humana")
     return path
+
+
+def _hashtags(ep: Episode) -> list[str]:
+    """Un solo origen para las etiquetas: las mismas que ve el dueño en Telegram.
+
+    Viajan como `#texto` en el caption y, para YouTube, sin el `#` en el campo `tags`
+    (documentado: `hashtags` es sólo referencia; las keywords se pasan por `tags`).
+    """
+    etiquetas = ["#PulsoCurioso", "#curiosidades", "#documental"]
+    nicho = str(ep.read_state().get("categoria", "")).replace("-", "").strip()
+    if nicho:
+        etiquetas.append(f"#{nicho}")
+    return etiquetas
 
 
 def texto_de_envio(ep: Episode) -> str:
@@ -137,10 +157,7 @@ def texto_de_envio(ep: Episode) -> str:
     guion_texto = "\n".join(l for l in guion_texto.splitlines()
                             if not l.lstrip().startswith("#")).strip()
     guion_texto = re.sub(r"\n{3,}", "\n\n", guion_texto)
-    hashtags = "#PulsoCurioso #curiosidades #documental"
-    nicho = str(ep.read_state().get("categoria", "")).replace("-", "")
-    if nicho:
-        hashtags += f" #{nicho}"
+    hashtags = " ".join(_hashtags(ep))
     partes = [
         f"🎬 {titulo}",
         f"— {subtitulo} —",
@@ -289,34 +306,119 @@ def enviar_telegram(ep: Episode, caption: str = "") -> None:
 
 
 def registrar(ep: Episode, estado: str = "producido") -> None:
-    """Deja el guion en el registro para el gate anti-duplicado (gate 4)."""
+    """Deja el guion en el registro para el gate anti-duplicado (gate 4).
+
+    El título y la historia van aparte de la huella: pipeline/huellas.py compara raíces
+    temáticas, así que la próxima corrida no puede volver a elegir la MISMA historia con
+    otras palabras (el gate 4 sólo ve texto y eso no alcanza).
+    """
     script = ep.read_text("script.txt")
+    estado_actual = ep.read_state() or {}
+    from .. import huellas
+    titulo = str(estado_actual.get("title") or ep.slug)
     config.REGISTRY.mkdir(parents=True, exist_ok=True)
     with (config.REGISTRY / "published.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({"slug": ep.slug, "estado": estado,
             "ts": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "titulo": titulo,
+            # La huella del título + el arranque del guion: es lo que compara pipeline/
+            # huellas.py cuando la fábrica elige la idea del día, antes de escribir nada.
+            "huella": huellas.huella(f"{titulo} {script[:3000]}"),
                              "script": script}, ensure_ascii=False) + "\n")
     print(f"  {ep.slug} registrado en registry/published.jsonl ({estado})")
 
 
+def _plan_publicacion(ep: Episode, ids: dict, desc: dict) -> list[dict]:
+    """Qué hay que subir, a qué plataforma y con qué copy. Vacío = no hay episodio publicable.
+
+    El master (el capítulo completo) era la pieza que nunca entraba al upload: se globaban
+    archivos de una ruta de 3 partes que el motor keyframe ya no produce.
+    """
+    manifest = {}
+    if (ep.artifacts / "derivados-manifest.json").exists():
+        manifest = ep.read_json("derivados-manifest.json") or {}
+    titulo = desc.get("titulo") or (ep.read_state() or {}).get("title") or ep.slug
+    from factory import parametros
+    motivos = gates.gate_titulo(titulo, *parametros.rango_titulo())
+    if motivos:
+        raise SystemExit(f"GATE TÍTULO BLOQUEA LA PUBLICACIÓN de {ep.slug}: {motivos[0]}")
+    descripcion = desc.get("descripcion") or titulo
+    plan: list[dict] = []
+
+    if ids.get("youtube"):
+        main = None
+        if manifest.get("youtube_main"):
+            candidato = ep.dir / manifest["youtube_main"]["archivo"]
+            main = candidato if candidato.exists() else None
+        if main is None:
+            for nombre in (f"{ep.slug}-main.mp4", f"{ep.slug}-collage.mp4", f"{ep.slug}-keyframe.mp4"):
+                ruta = ep.dir / "renders" / nombre
+                if ruta.exists():
+                    main = ruta
+                    break
+        if main:
+            plan.append({"plataforma": "youtube", "archivo": main, "titulo": titulo,
+                         "descripcion": descripcion,
+                         "tags": [h.lstrip("#") for h in _hashtags(ep)],
+                         "plataformas": [{"platform": "youtube", "accountId": ids["youtube"],
+                                          "platformSpecificData": {"title": titulo}}]})
+
+    if ids.get("facebook"):
+        reel = None
+        if manifest.get("facebook_reel"):
+            candidato = ep.dir / "derivados" / manifest["facebook_reel"]["archivo"]
+            reel = candidato if candidato.exists() else None
+        if reel is None:
+            for patron in ("facebook-reel.mp4", "trailer-a-facebook-reel.mp4"):
+                ruta = ep.dir / "derivados" / patron
+                if ruta.exists():
+                    reel = ruta
+                    break
+        if reel:
+            plan.append({"plataforma": "facebook", "archivo": reel, "titulo": titulo,
+                         "descripcion": descripcion,
+                         "plataformas": [{"platform": "facebook", "accountId": ids["facebook"]}]})
+    return plan
+
+
+def _qc_del_master(ep: Episode) -> dict:
+    """El control de calidad MEDIDO del máster, venga de la ruta que venga.
+
+    La barrera histórica era el NOMBRE de la ruta ("keyframe" → revisar), que no mide nada:
+    lo que tiene que impedir que un video salga al mundo es un defecto real (duración,
+    loudness, resolución o cuadros muertos), no la etiqueta del motor que lo produjo.
+    """
+    for nombre in ("render_collage.json", "render_keyframes.json", "qc.json"):
+        if (ep.artifacts / nombre).exists():
+            datos = ep.read_json(nombre) or {}
+            if datos.get("status"):
+                return {**datos, "artifact": nombre}
+    return {}
+
+
 def publicar_automatico(ep: Episode, no_publish: bool = False, aprobado: str | None = None) -> dict:
-    """Sube los derivados a Zernio y publica.
+    """Sube los derivados a Zernio y publica (YouTube máster + Facebook reel).
 
     Con AUTO_PUBLISH activo (hay key en .env) es publishNow; con --no-publicar queda
     como draft. La aprobación explícita del dueño (botón "✅ APROBAR Y PUBLICAR" de
-    Telegram, o "/aprobar <slug>") habilita publicar aunque la ruta sea audiovisual:
-    justamente esa "revisión humana" es lo que el dueño cambia con su toque.
+    Telegram, o "/aprobar <slug>") salta también la barrera de QC, porque el dueño ya
+    vio el video con sus propios ojos y eso vale más que el medidor.
     """
     from .. import gates, zernio
     meta = ep.metadata()
     gates.gate_publicacion(meta)  # gate 7: flag sintético obligatorio antes de salir al mundo
-    manifest_path = ep.artifacts / "derivados-manifest.json"
-    if aprobado != "user" and manifest_path.exists() and (ep.read_json("derivados-manifest.json") or {}).get("ruta") in (
-            "keyframe", "avatar_fallback"):
-        print("  ruta audiovisual en revisión: YouTube/Facebook no se publican automáticamente")
-        return {"status": "revision_humana_requerida"}
+    if aprobado != "user":
+        qc = _qc_del_master(ep)
+        if not qc:
+            print("  publicación BLOQUEADA: no hay QC medido del máster, no se publica a ciegas")
+            return {"status": "revision_humana_requerida",
+                    "motivo": "falta artifacts/render_keyframes.json (o qc.json) con status"}
+        if qc.get("status") != "pass":
+            print(f"  publicación BLOQUEADA por QC ({qc.get('problemas')})")
+            return {"status": "revision_humana_requerida", "motivo": qc.get("problemas"),
+                    "qc": qc.get("artifact")}
     if no_publish and aprobado != "user":
-        print("  publicación automática OFF (AUTO_PUBLISH=false o --no-publicar): sólo borradores/checklist")
+        print("  --no-publicar: sólo borradores/checklist (AUTO_PUBLISH no se toca)")
         return {"status": "sin_publicar"}
     if aprobado != "user" and not config.auto_publish():
         print("  AUTO_PUBLISH del .env desactivado: no se publica")
@@ -327,35 +429,80 @@ def publicar_automatico(ep: Episode, no_publish: bool = False, aprobado: str | N
         raise SystemExit("AUTO_PUBLISH activo pero falta ZERNIO_API_KEY")
     ids = {"youtube": z["youtube"], "facebook": z["facebook"]}
     if not ids["youtube"]:
-        raise SystemExit("Falta ZERNIO_ID_YOUTUBE en .env")
+        raise SystemExit("Falta ZERNIO_YOUTUBE_ID en .env")
 
-    desc = ep.read_json("publicacion/descripciones.json")
-    resultados = []
+    ruta_desc = ep.dir / "publicacion" / "descripciones.json"
+    desc = json.loads(ruta_desc.read_text(encoding="utf-8")) if ruta_desc.exists() else {}
     try:
-        for i, parte in enumerate(sorted((ep.dir / "derivados").glob("yt-parte-*.mp4")), 1):
-            url = zernio.upload(parte)
-            post = zernio.create_post(
-                desc["descripcion"], [url],
-                [{"platform": "youtube", "accountId": ids["youtube"],
-                  "platformSpecificData": {"title": f"{desc['titulo']} (parte {i} de 3)"}}])
-            resultados.append({"archivo": parte.name, "postId": post.get("_id"), "status": post.get("status")})
-            print(f"  publicado {parte.name} -> youtube ({post.get('status')})")
-        if ids["facebook"]:
-            for trailer, label in (("tiktok-trailer-90s.mp4", "Adelanto"), ("instagram-trailer-30s.mp4", "Adelanto 30s")):
-                f = ep.dir / "derivados" / trailer
-                if not f.exists():
-                    continue
-                url = zernio.upload(f)
-                post = zernio.create_post(f"{label}: {desc['descripcion']}", [url],
-                                          [{"platform": "facebook", "accountId": ids["facebook"]}])
-                resultados.append({"archivo": trailer, "postId": post.get("_id"), "status": post.get("status")})
-                print(f"  publicado {trailer} -> facebook ({post.get('status')})")
-    except zernio.ZernioError as exc:
-        print(f"  ZERNIO ERROR: {exc} — el episodio queda listo en checklist + Telegram")
-        resultados.append({"error": str(exc)})
+        plan = _plan_publicacion(ep, ids, desc)
+    except SystemExit as titulo:
+        # Un título que no pasa el gate NO es un error de la corrida: es un episodio que
+        # hay que mostrarle al dueño. Si acá cortaba el proceso, run.py lo atrapaba como
+        # "keyframe BLOQUEADO" y el episodio jamás llegaba a Telegram.
+        print(f"  publicación BLOQUEADA por el gate de título: {titulo}")
+        return {"status": "revision_humana_requerida", "motivo": str(titulo)[:300]}
+    if not plan:
+        # El fallo histórico: se globaba derivados/yt-parte-*.mp4 (que la ruta keyframe no
+        # produce), el loop quedaba vacío y `all([])` devolvía True -> AUTO_PUBLISHED con
+        # cero uploads y autonomía desbloqueada. Sin plan no hay éxito posible.
+        meta["publish_status"] = "SIN_MATERIAL_PUBLICABLE"
+        ep.save_metadata(meta)
+        print("  publicación: NO hay master ni reel que subir — nada se publicó (no es éxito)")
+        return {"status": "sin_material", "resultados": []}
 
-    ep.write_json("publicacion/zernio.json", {"resultados": resultados,
+    resultados = []
+    for item in plan:
+        # Una clave por pieza: si la corrida se interrumpe y vuelve, Zernio devuelve el post
+        # original en vez de crear el segundo capítulo publicado del mismo día.
+        clave = f"{ep.slug}:{item['plataforma']}:{item['archivo'].name}"
+        try:
+            url = zernio.upload(item["archivo"])
+            respuesta = zernio.create_post(item["descripcion"], [url], item["plataformas"],
+                                           title=item["titulo"], idempotency_key=clave,
+                                           tags=item.get("tags"))
+            post = respuesta.get("post", {})
+            registro = {"plataforma": item["plataforma"], "archivo": item["archivo"].name,
+                        "postId": post.get("_id"), "status": post.get("status")
+                        or respuesta.get("status"), "mediaUrl": url,
+                        "url": post.get("platformPostUrl"), "http": respuesta.get("_http")}
+            # La platformPostUrl no siempre está en la respuesta de creación (Zernio la
+            # resuelve después): un status published POSTERIOR con postId es éxito igual.
+            # Se reconcilia al vuelo contra /posts/:id en vez de gritar FALLÓ con post vivo.
+            if registro["status"] == "published" and registro["postId"] and not registro["url"]:
+                try:
+                    st, datos = zernio._get(f"/posts/{registro['postId']}", {})
+                    for pp in datos.get("post", {}).get("platforms", []):
+                        if pp.get("platformPostUrl"):
+                            registro["url"] = pp["platformPostUrl"]
+                except Exception:
+                    pass
+            resultados.append(registro)
+            existe_pos = str(registro["postId"] or "")
+            cola_url = registro["url"] or f"(URL pendiente de Zernio; postId {existe_pos})"
+            print(f"  {item['plataforma']}: {registro['status']} "
+                  f"({item['archivo'].name}) {cola_url}")
+        except zernio.ZernioError as exc:
+            print(f"  ZERNIO ERROR en {item['plataforma']} ({item['archivo'].name}): {exc}")
+            resultados.append({"plataforma": item["plataforma"], "archivo": item["archivo"].name,
+                               "postId": None, "status": "failed", "error": str(exc)})
+
+    ep.write_json("publicacion/zernio.json", {"plan": [f"{i['plataforma']}:{i['archivo'].name}" for i in plan],
+                                              "resultados": resultados,
                                               "pendiente_humano": "toggle 'contenido alterado' en YouTube Studio"})
-    meta["publish_status"] = "AUTO_PUBLISHED" if all(r.get("status") for r in resultados if "postId" in r) else "AUTO_PUBLISH_FALLÓ"
+    # post.status documentado: draft|pending_approval|scheduled|publishing|published|partial|failed|cancelled.
+    # Sólo `published` es "el mundo ya lo ve". `scheduled`/`publishing` no son fallo (Zernio
+    # reintenta solo) pero tampoco son éxito: contarlos como publicados era el éxito falso.
+    publicados = [r for r in resultados if r.get("status") == "published" and r.get("url")]
+    en_curso = [r for r in resultados if r.get("status") in ("scheduled", "publishing", "duplicate")]
+    if not publicados and not en_curso:
+        meta["publish_status"] = "AUTO_PUBLISH_FALLÓ"
+    elif publicados and len(publicados) == len(plan):
+        meta["publish_status"] = "AUTO_PUBLISHED"
+    else:
+        meta["publish_status"] = "AUTO_PUBLISHED_PARCIAL"
+    meta["publish_urls"] = {r["plataforma"]: r.get("url") for r in resultados if r.get("url")}
     ep.save_metadata(meta)
-    return {"resultados": resultados}
+    print(f"  publicación: {len(publicados)}/{len(plan)} publicados confirmados"
+          f"{f', {len(en_curso)} en curso' if en_curso else ''} -> {meta['publish_status']}")
+    return {"resultados": resultados, "plan": len(plan), "exitosas": len(publicados),
+            "en_curso": len(en_curso), "estado": meta["publish_status"]}

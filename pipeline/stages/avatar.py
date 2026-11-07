@@ -1,4 +1,4 @@
-"""Etapa de avatar: guion narrado -> actuación 3D renderizada -> video con subtítulos y mezcla.
+"""Etapa de avatar: guion narrado -> actuación 3D renderizada -> video con mezcla.
 
 Diferencia con montaje.py: acá el plano NO es una imagen quieta ni una cartela. Cada frame se
 genera con el motor de actuación (Three.js headless vía factory/render/cdp.mjs) leyendo la
@@ -24,7 +24,6 @@ from pathlib import Path
 
 from .. import config
 from ..episode import Episode
-from .montaje import _ts, validar_ass
 
 ROOT = Path(__file__).resolve().parents[2]
 CDP = ROOT / "factory" / "render" / "cdp.mjs"
@@ -96,37 +95,6 @@ def _desde_registro(reg: dict) -> dict:
     return {"morfos": morfos, "huesos": huesos, "visema_morphs": ["mouthOpen"]}
 
 
-def _ass_global(segmentos: list[dict], path: Path, margin_v: int = 55) -> Path:
-    """Un solo ASS para todo el video, con los tiempos ABSOLUTOS de la timeline del director."""
-    lineas = []
-    for s in segmentos:
-        words = (s.get("texto") or "").split()
-        chunks = [" ".join(words[i:i + 6]) for i in range(0, len(words), 6)] or [""]
-        if not chunks[0]:
-            continue
-        paso = (s["t1"] - s["t0"]) / len(chunks)
-        for i, c in enumerate(chunks):
-            lineas.append(f"Dialogue: 0,{_ts(s['t0'] + i * paso)},{_ts(s['t0'] + (i + 1) * paso)},"
-                          f"Default,,0,0,0,,{c.replace('{', '').replace('}', '')}")
-    texto = f"""[Script Info]
-ScriptType: v4.00+
-WrapStyle: 2
-PlayResX: {config.VIDEO_W}
-PlayResY: {config.VIDEO_H}
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginV, Encoding
-Style: Default, DejaVu Sans, 36, &H00FFFFFF, &H00101010, &H80000000, 1, 0, 1, 3, 1, 2, {max(180,margin_v)}, 1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""" + "\n".join(lineas) + "\n"
-    validar_ass(texto, str(path))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(texto, encoding="utf-8")
-    return path
-
-
 def _huella(tl_path: Path, lips_path: Path, glb: Path | None, n: int) -> str:
     """Identifica UNA sola campana de render: reanudar sólo es válido si nada cambió."""
     import hashlib
@@ -178,13 +146,12 @@ def _escribir_rigmap(glb: Path) -> Path:
     return p
 
 
-def mezclar(ep: Episode, frames_dir: Path, sub: Path, voz: Path, total: float) -> Path:
-    """Frames 540x960 -> master vertical 720x1280 + subtítulos y mezcla normalizada."""
+def mezclar(ep: Episode, frames_dir: Path, voz: Path, total: float) -> Path:
+    """Frames 540x960 -> master vertical 720x1280 + mezcla normalizada."""
     silent = ep.dir / "renders" / "avatar-silent.mp4"
     _run(["ffmpeg", "-y", "-v", "error", "-framerate", str(FPS),
           "-i", str(frames_dir / "frame_%05d.png"),
-          "-vf", f"scale={config.VIDEO_W}:{config.VIDEO_H}:flags=lanczos,"
-                 f"subtitles={sub}",
+          "-vf", f"scale={config.VIDEO_W}:{config.VIDEO_H}:flags=lanczos",
           "-c:v", "libx264", "-preset", str(config.FFMPEG_PRESET), "-crf", str(config.FFMPEG_CRF),
           "-pix_fmt", "yuv420p", "-r", str(FPS), "-an", str(silent)])
     salida = ep.dir / "renders" / f"{ep.slug}-avatar.mp4"
@@ -255,8 +222,7 @@ def render(ep: Episode, glb: Path | None = None, forzar_frames: int | None = Non
     n = forzar_frames or int(round(total * FPS)) + 1
     frames_dir, informe = frames(ep, tl_path, lips_path, glb, n, reanudar=reanudar)
 
-    sub = _ass_global(tl["segmentos"], ep.dir / "assets" / "sub" / "avatar.ass")
-    salida = mezclar(ep, frames_dir, sub, voz, total)
+    salida = mezclar(ep, frames_dir, voz, total)
 
     info = json.loads(_run(["ffprobe", "-v", "error", "-show_streams", "-show_format",
                             "-of", "json", str(salida)]).stdout)
@@ -319,7 +285,7 @@ def render(ep: Episode, glb: Path | None = None, forzar_frames: int | None = Non
         "cambios_emocionales": sorted({s["emocion"] for s in tl["segmentos"]}),
         "transiciones_emocionales": transiciones,
         "planos": planos,
-        "subtitulos": sub.name, "problemas": problemas,
+        "problemas": problemas,
         "status": "pass" if not problemas else "FAIL",
     }
     ep.write_json("render_avatar.json", resumen)

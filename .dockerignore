@@ -1,0 +1,8 @@
+# Docker ignore para los builds (el repo completo via por bind mount a /app,
+# no hace falta dentro del build context). Contextos de build: ./docker/*.
+*
+!docker/factory/Dockerfile
+!docker/factory/requirements.txt
+!docker/dashboard/Dockerfile
+!docker/dashboard/default.conf
+!docker/dashboard/www/**

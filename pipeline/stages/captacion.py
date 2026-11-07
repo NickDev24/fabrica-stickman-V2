@@ -195,6 +195,25 @@ def _imagen_portada_ia(ep: Episode, beat: dict) -> Path | None:
     return None
 
 
+def _dibujar_portada(base: Path, txt: Path, dst: Path, ancho: int, alto: int) -> Path:
+    """La misma pregunta gancho, recortada a la relación de aspecto del destino.
+
+    YouTube exige 1280x720 y ese archivo NO existía: el capítulo completo subía con el
+    fotograma que elige el algoritmo. El letra es proporcional al ancho (110 px sobre 1080
+    == 131 px sobre 1280) porque la miniatura se juzga a ~320 px en el feed móvil.
+    """
+    fs = max(28, round(ancho * 110 / 1080))
+    vf = (f"scale={ancho}:{alto}:force_original_aspect_ratio=increase:flags=lanczos,"
+          f"crop={ancho}:{alto},eq=contrast=1.08:saturation=1.1,"
+          f"drawtext=textfile={txt}:fontfile=/usr/share/fonts/truetype/dejavu/"
+          f"DejaVuSans-Bold.ttf:fontcolor=yellow:fontsize={fs}:x=(w-text_w)/2:"
+          f"y={int(alto * 0.089)}:line_spacing={fs // 6}:borderw={max(4, fs // 14)}:"
+          "bordercolor=black:box=1:boxcolor=black@0.25:boxborderw=" + str(fs // 5))
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(base), "-vf", vf,
+          "-frames:v", "1", str(dst)])
+    return dst
+
+
 def _portada_scroll(ep: Episode, kf_dir: Path, beat: dict, dst: Path) -> Path | None:
     """PORTADA del episodio: lo que YouTube/Facebook muestran en pausa/scroll.
 
@@ -202,6 +221,9 @@ def _portada_scroll(ep: Episode, kf_dir: Path, beat: dict, dst: Path) -> Path | 
     beat más intenso de la historia + la PREGUNTA gancho en amarillo con borde negro,
     texto grande arriba (zona segura de móvil), rara vez >6 palabras. Si se pidió una
     imagen generada a medida (PORTADA_LLM=1) y salió, esa es la base.
+
+    Produce las DOS salidas que pide factory/packaging/thumbnail_rules.json: la vertical
+    (reel/short/pausa) y `portada-yt.jpg` 1280x720, que es la miniatura real del video largo.
     """
     imagen_beat = kf_dir / f"kf-{beat['i']:03d}.jpg"
     if not imagen_beat.exists():
@@ -214,14 +236,11 @@ def _portada_scroll(ep: Episode, kf_dir: Path, beat: dict, dst: Path) -> Path | 
     txt = ep.dir / "artifacts" / "portada.txt"
     txt.parent.mkdir(parents=True, exist_ok=True)
     txt.write_text(_texto_portada(ep), encoding="utf-8")
-    # el texto vive en el tercio superior: los controles de pausa y el título del feed
-    # de YouTube están abajo, y el face del stickman queda visible al centro.
-    vf = ("scale=1080:1920:flags=lanczos,eq=contrast=1.08:saturation=1.1,"
-          "drawtext=textfile=" + str(txt) + ":fontfile=/usr/share/fonts/truetype/dejavu/"
-          "DejaVuSans-Bold.ttf:fontcolor=yellow:fontsize=110:x=(w-text_w)/2:y=170:"
-          "line_spacing=18:borderw=8:bordercolor=black:box=1:boxcolor=black@0.25:boxborderw=24")
-    _run(["ffmpeg", "-y", "-v", "error", "-i", str(imagen_beat), "-vf", vf,
-          "-frames:v", "1", str(dst)])
+    salidas = {"vertical_reel": (dst, 1080, 1920),
+               "youtube_episodio": (dst.parent / "portada-yt.jpg", 1280, 720),
+               "facebook_feed": (dst.parent / "portada-fb.jpg", 1080, 1350)}
+    for destino, ancho, alto in salidas.values():
+        _dibujar_portada(imagen_beat, txt, destino, ancho, alto)
     return dst
 
 
@@ -301,10 +320,21 @@ def derivar_captacion(ep: Episode) -> dict:
              "plataforma": "Facebook (post de texto)", "hora": HORA_HISTORIETA_FB,
              "texto_cta": CTA},
             {"pieza": "portada_scroll", "archivo": miniatura.name if miniatura else None,
-             "plataforma": "Miniatura YouTube / tapa de pausa (Facebook/Telegram)",
+             "plataforma": "tapa de pausa (Facebook/Telegram) y Reel",
              "hora": None, "texto_cta": None,
-             "nota": "imagen del beat más intenso + pregunta gancho; subir como thumbnail "
-                     "en YouTube Studio y portada del Reel"},
+             "nota": "imagen del beat más intenso + pregunta gancho; portada del Reel"},
+            {"pieza": "miniatura_youtube",
+             "archivo": "portada-yt.jpg" if miniatura else None,
+             "resolucion": "1280x720",
+             "plataforma": "YouTube (thumbnail del video largo)",
+             "hora": None, "texto_cta": None,
+             "nota": "subirla en YouTube Studio: sin este archivo el video largo sale con el "
+                     "frame que elige el algoritmo, que nunca es el clímax"},
+            {"pieza": "portada_facebook_feed",
+             "archivo": "portada-fb.jpg" if miniatura else None,
+             "resolucion": "1080x1350",
+             "plataforma": "Facebook (post cuadrado/vertical)",
+             "hora": None, "texto_cta": None},
             {"pieza": "capitulo_completo_youtube", "archivo": str(main.relative_to(ep.dir)),
              "plataforma": "YouTube", "hora": HORA_CAPITULO, "texto_cta": None},
         ],
