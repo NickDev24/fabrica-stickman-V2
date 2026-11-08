@@ -35,8 +35,8 @@
 
 ```bash
 # 1. Clonar
-git clone https://github.com/<tu-usuario>/documentales-generator.git
-cd documentales-generator
+git clone https://github.com/NickDev24/fabrica-stickman.git
+cd fabrica-stickman
 
 # 2. Configurar entorno
 cp .env.example .env
@@ -132,7 +132,7 @@ rojo=error, ámbar=sin turno). Se actualiza en tiempo real vía `/api/oficina` +
 ## 🏗️ Arquitectura
 
 ```
-documentales-generator/
+fabrica-stickman/
 ├── docker/                 # Dockerfiles (factory + dashboard)
 ├── docker-compose.yml      # factory :8610 + dashboard :8611
 ├── pipeline/               # motor de producción (stages, config, gates)
