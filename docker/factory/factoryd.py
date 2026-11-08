@@ -961,10 +961,62 @@ async def api_conectores_probar(req: web.Request) -> web.Response:
     if not c:
         return web.json_response({"ok": False, "error": "conector no configurado"}, status=404)
 
+    endpoint = (c.get("endpoint") or "").strip()
+    auth_tipo = c.get("auth_tipo", "none")
+    token = c.get("token", "")
+    tipo = c.get("tipo", "mcp")
+
+    # Conectores sin endpoint HTTP (stdio/local, p.ej. filesystem, fetch,
+    # playwright, github, memory, sequential-thinking, youtube-mcp): no son
+    # servidores MCP por HTTP, se prueban por el agente con su cliente MCP.
+    # Marcarlos como "ok" evita el falso negativo del handshake JSON-RPC.
+    if not endpoint:
+        c["estado"] = "ok"
+        c["ultimo_test"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        c["ultimo_error"] = None
+        c["capacidades"] = c.get("capacidades") or c.get("scopes") or []
+        _conectores_guardar(conectores)
+        return web.json_response({
+            "ok": True, "platform": platform, "estado": "ok", "error": None,
+            "capacidades": c["capacidades"],
+            "mensaje": "conector local (stdio) — sin endpoint HTTP; disponible para el agente",
+        })
+
+    # Conectores REST (p.ej. Zernio): prueba real con GET al endpoint base.
+    if tipo == "api" or platform == "zernio":
+        import aiohttp
+        headers = {}
+        if auth_tipo == "bearer" and token:
+            headers["Authorization"] = f"Bearer {token}"
+        elif auth_tipo == "api_key" and token:
+            headers["X-API-Key"] = token
+        headers.update(c.get("headers_extra") or {})
+        url = endpoint.rstrip("/")
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10.0)) as session:
+                async with session.get(url, headers=headers) as r:
+                    ok = r.status < 400
+                    error = None if ok else f"GET {url} HTTP {r.status}"
+                    caps = c.get("scopes") or []
+        except Exception as exc:
+            ok = False
+            error = str(exc)[:200]
+            caps = []
+        c["estado"] = "ok" if ok else "err"
+        c["ultimo_test"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        c["ultimo_error"] = error
+        c["capacidades"] = caps or c.get("capacidades") or []
+        _conectores_guardar(conectores)
+        return web.json_response({
+            "ok": ok, "platform": platform, "estado": c["estado"],
+            "error": error, "capacidades": c["capacidades"],
+            "mensaje": "Conexión REST establecida" if ok else (error or "Sin respuesta"),
+        })
+
     ok, error, caps = await _mcp_handshake(
-        c.get("endpoint", ""),
-        c.get("auth_tipo", "none"),
-        c.get("token", ""),
+        endpoint,
+        auth_tipo,
+        token,
         c.get("headers_extra", {}),
     )
     c["estado"] = "ok" if ok else "err"
