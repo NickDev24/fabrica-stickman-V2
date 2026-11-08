@@ -1,26 +1,37 @@
-projects/
-work/
-__pycache__/
-.venv/
-.pytest_cache/
-*.onnx
-models/
-tools/
-avatar_4f/
-stickman-video-director/
-assets/imagenoteca/
 
-# secretos e historial local
-.env
+# ═══ SOLO LOCAL — no corresponden al repo publico (purga 2026-11-08) ═══
+# config de voz pequena (los .onnx ya van excluidos)
+# documentos internos de estrategia/planificacion
+# estado runtime de la fabrica (ideas, conectores con tokens, caches, logs)
 
 # runtime y datos locales (no versionar)
-state/llm_cache/
-state/imagen_cache/
-state/logs/
-state/factoryd.json
-state/produccion.lock
+# secretos e historial local
+assets/imagenoteca/
+avatar_4f/
+CODEX.md
+docs/
+.env
+ESTRATEGIA_PUBLICACION.md
+models/
+*.onnx
+*.onnx.json
+projects/
+__pycache__/
+.pytest_cache/
+ROADMAP.md
+state/
+state/continuar_stages.sh
 state/diario.jsonl
 state/diario.log
-state/continuar_stages.sh
-youtube-mcp/
+state/factoryd.json
+state/imagen_cache/
+state/llm_cache/
+state/logs/
+state/produccion.lock
+stickman-video-director/
 .tmp-clean.*/
+tools/
+.venv/
+VIABILIDAD.md
+work/
+youtube-mcp/
