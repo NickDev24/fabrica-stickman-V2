@@ -345,6 +345,12 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
             return None, error
     local = name == "ollama"
     key = os.environ.get(cfg.get("key_env", ""), "") if cfg.get("key_env") else ""
+    # Bedrock acepta tanto BADROCK_API_KEY (nombre histórico del .env) como
+    # AWS_BEARER_TOKEN_BEDROCK (nombre estándar de AWS). Se prueba el primero y,
+    # si falta, el segundo: así el usuario puede pegar el token con cualquiera de
+    # los dos nombres sin tocar config.
+    if not key and cfg.get("key_env") == "BADROCK_API_KEY":
+        key = os.environ.get("AWS_BEARER_TOKEN_BEDROCK", "")
     if not key and not local:
         _health_record(name, "pendiente", f"sin {cfg.get('key_env', 'key')}")
         return None, f"sin {cfg.get('key_env', 'key')}"
