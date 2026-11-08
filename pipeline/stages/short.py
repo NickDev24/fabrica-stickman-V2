@@ -120,15 +120,33 @@ def narracion_corta(ep: Episode, bloques: list[str], pad_entre_s: float = 0.12) 
 
 
 def _cama(out: Path, segundos: float) -> None:
-    """Cama musical sintetizada localmente (lavfi): autoría propia, sin licencia ajena."""
-    _run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-          "-i", f"sine=frequency=110:beep_factor=2:duration={segundos}", "-f", "lavfi",
-          "-i", f"anoisesrc=color=brown:amplitude=0.05:duration={segundos}",
-          "-filter_complex",
-          "[0:a]tremolo=f=0.4:d=0.35,volume=0.10,lowpass=f=900,aresample=22050[a0];"
-          "[1:a]volume=0.05,lowpass=f=400[a1];[a0][a1]amix=inputs=2:duration=first,"
-          "afade=t=in:d=1.5,afade=t=out:st={:.2f}:d=1.5[a]".format(max(0.1, segundos - 1.5)),
-          "-map", "[a]", "-ar", "22050", "-ac", "1", "-c:a", "aac", "-b:a", "64k", str(out)])
+    """Cama musical sintetizada localmente (lavfi): autoría propia, sin licencia ajena.
+
+    Progresión Am-F-C-G (la más usada en contenido emocional/viral) rotando
+    cada 4 s, con un drone grave y ruido marrón como textura. Sin copyright,
+    sin APIs externas, sin costo. El volumen final queda bajo la voz (0.12)
+    para no competir con la narración.
+    """
+    chord_expr = ("if(between(t,0,4),sin(2*PI*220*t)+sin(2*PI*261.63*t)+sin(2*PI*329.63*t),"
+                  "if(between(t,4,8),sin(2*PI*174.61*t)+sin(2*PI*220*t)+sin(2*PI*261.63*t),"
+                  "if(between(t,8,12),sin(2*PI*261.63*t)+sin(2*PI*329.63*t)+sin(2*PI*392*t),"
+                  "sin(2*PI*196*t)+sin(2*PI*246.94*t)+sin(2*PI*293.66*t))))*0.06")
+    bass_expr = "sin(2*PI*55*t)*0.08"
+    fade_out_st = max(0.1, segundos - 2.0)
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-f", "lavfi", "-i", "aevalsrc=exprs='{}':s=22050".format(chord_expr),
+           "-f", "lavfi", "-i", "aevalsrc=exprs='{}':s=22050".format(bass_expr),
+           "-f", "lavfi", "-i", "anoisesrc=color=brown:amplitude=0.04",
+           "-t", str(segundos),
+           "-filter_complex",
+           "[0:a]lowpass=f=1200,tremolo=f=0.3:d=0.25,afade=t=in:d=2.0,afade=t=out:st={:.2f}:d=2.0,aresample=22050[a0];"
+           "[1:a]lowpass=f=200,afade=t=in:d=2.0,afade=t=out:st={:.2f}:d=2.0,aresample=22050[a1];"
+           "[2:a]lowpass=f=300,volume=0.5,afade=t=in:d=2.0,afade=t=out:st={:.2f}:d=2.0,aresample=22050[a2];"
+           "[a0][a1][a2]amix=inputs=3:duration=first[a]".format(
+               fade_out_st, fade_out_st, fade_out_st),
+           "-map", "[a]", "-ar", "22050", "-ac", "1", "-c:a", "aac", "-b:a", "64k",
+           "-t", str(segundos), str(out)]
+    _run(cmd)
 
 
 def render(ep: Episode, perfil_clave: str = "short_vertical") -> dict:
