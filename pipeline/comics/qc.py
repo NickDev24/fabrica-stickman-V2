@@ -11,11 +11,14 @@ Chequeos (FABRICA-DE-COMICS.md, orden del dueño 2026-11-06):
     (la viñeta de silencio es panel negro: no lleva imagen),
   - páginas 1080x1620, chapter_vertical y carrusel 1 imagen por página,
   - personajes declarados en personajes.json.
+  - (NUEVO 2026-11-08) sin paneles negros (error de render), sin captions
+    duplicados, <=18 palabras por glosa, cold open con rol 'gancho'.
 El reporte va a comics/qc.json y NO bloquea nunca el pipeline de video.
 """
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -26,6 +29,26 @@ from .adaptar_guion import NARRACION_MAX, VINETAS_MIN
 
 IMAG_TAM_MIN = 8000
 PAG_TAM = (1080, 1620)
+NEGRO_UMBRAL = 16  # brillo medio por debajo de este valor = panel negro
+
+
+def _normalizar(texto: str) -> str:
+    return re.sub(r"\W+", " ", texto.casefold()).strip()
+
+
+def _es_panel_negro(ruta: Path) -> bool:
+    """True si la imagen es casi totalmente negra (error de render)."""
+    try:
+        with Image.open(ruta) as im:
+            im = im.convert("L")
+            # muestreo para no leer 1 MB entero por viñeta
+            px = list(im.getdata()[::max(1, im.size[0] * im.size[1] // 2000)])
+            if not px:
+                return False
+            media = sum(px) / len(px)
+            return media < NEGRO_UMBRAL
+    except (OSError, ValueError):
+        return False
 
 
 def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -> list[str]:
@@ -51,6 +74,7 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
         problemas.append(f"sum(grillas)={sum(sum(g) for g in grillas)} != viñetas {n_v}")
 
     # narración + ancla + fuentes
+    narraciones_normalizadas = []
     for p in paneles:
         i = p.get("i")
         rol = str(p.get("rol_ritmico", ""))
@@ -59,6 +83,9 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
             problemas.append(f"viñeta {i}: narración vacía")
         elif len(narr) > NARRACION_MAX:
             problemas.append(f"viñeta {i}: narración {len(narr)} chars (> {NARRACION_MAX})")
+        # Presupuesto de palabras: una glosa que no se lee de un vistazo no retiene.
+        if narr.strip() and len(narr.split()) > 18:
+            problemas.append(f"viñeta {i}: {len(narr.split())} palabras (>18) — no se lee de un vistazo")
         if rol != "silencio":
             ancla = str(p.get("ancla_guion", "") or "").strip()
             if not ancla:
@@ -68,6 +95,21 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
         # se bloquea el libro, aunque el texto «suene bien».
         if str(p.get("caption_via", "")) == "llm" and not (p.get("paridad") or {}).get("ok"):
             problemas.append(f"viñeta {i}: caption LLM sin paridad factual aprobada")
+        if narr.strip():
+            narraciones_normalizadas.append((i, _normalizar(narr)))
+
+    # Duplicados de caption: reciclar el mismo texto mata el ritmo y la credibilidad.
+    vistos: dict[int, int] = {}
+    for i, n in narraciones_normalizadas:
+        if n in vistos:
+            problemas.append(f"viñeta {i}: caption duplicado de la viñeta {vistos[n]}")
+        else:
+            vistos[n] = i
+
+    # Hook obligatorio: el capítulo arranca con un gancho (cold open). Sin él no
+    # hay retención en el primer scroll.
+    if not any(str(p.get("rol_ritmico", "")) == "gancho" for p in paneles):
+        problemas.append("sin viñeta con rol_ritmico='gancho': falta el cold open")
 
     # footer de fuentes POR PÁGINA (retención también es credibilidad)
     fuentes_por_pag: dict[int, int] = defaultdict(int)
@@ -93,7 +135,12 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
         try:
             if ruta.stat().st_size < IMAG_TAM_MIN:
                 problemas.append(f"{ruta.name}: {ruta.stat().st_size} bytes (sospechosa)")
-            Image.open(ruta).verify()
+            with Image.open(ruta) as im:
+                im.verify()
+            # Panel negro = error de render (medido en producción: panel 9 del
+            # capítulo Gardner). El silencio es el único panel negro legítimo.
+            if _es_panel_negro(ruta):
+                problemas.append(f"viñeta {i}: panel negro (error de render)")
         except (OSError, ValueError, FileNotFoundError) as e:
             problemas.append(f"{ruta.name}: imagen ilegible ({type(e).__name__})")
 

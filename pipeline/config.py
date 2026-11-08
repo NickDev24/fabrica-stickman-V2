@@ -167,17 +167,17 @@ def cloudflare_cfg() -> dict:
 # DEL LISTADO EXISTE (ver llm._habilitado): sin ALLOW_REMOTE_LLM los de nube se descartan
 # y queda el local; Gemini sólo aparece si ALLOW_PAID_LLM=1 y la tarea es premium.
 TASK_ROUTES = {
-    "default": ["bedrock", "ollama"],
-    "investigacion": ["bedrock", "ollama"],
-    # gpt-oss-120b (Bedrock, reasoning low, medido 1,3 s) respeta el tope de palabras:
-    # llama-3.1-8b entregaba 2.000+ palabras en los 3 intentos de recorte y bloqueaba
-    # toda la producción por gate de extensión (medido 2026-11-05, corrida red-proxy).
-    "guion": ["bedrock", "cloudflare", "ollama"],
-    # el que escribió el guion no puede ser el que lo valida
-    "verificacion": ["bedrock", "ollama"],
-    "direccion": ["bedrock", "ollama"],
-    "prompts_visuales": ["bedrock", "ollama"],
-    "evaluacion": ["bedrock", "ollama"],
+    # Cloudflare Workers AI (llama-3.1-8b) es el proveedor gratis VIVO hoy; bedrock
+    # tiene la key rechazada (401) y ollama local se cuelga por timeout. Por eso
+    # cloudflare va primero en TODAS las tareas. Bedrock queda fuera hasta que se
+    # repare la key (BADROCK_API_KEY) — si se arregla, re-agregarlo a "guion".
+    "default": ["cloudflare", "ollama"],
+    "investigacion": ["cloudflare", "ollama"],
+    "guion": ["cloudflare", "ollama"],
+    "verificacion": ["cloudflare", "ollama"],
+    "direccion": ["cloudflare", "ollama"],
+    "prompts_visuales": ["cloudflare", "ollama"],
+    "evaluacion": ["cloudflare", "ollama"],
 }
 
 # Cada etapa se identifica con un `tag` (es lo que llega a llm.chat en la práctica). Esta

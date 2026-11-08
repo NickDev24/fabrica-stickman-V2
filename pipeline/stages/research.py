@@ -85,7 +85,7 @@ def _corroboran(candidato: dict, fetched: dict[int, dict]) -> list[int]:
         texto = fuente.get("excerpt") or ""
         if numeros and not numeros <= _numeros_de(texto):
             continue    # el dato numérico tiene que estar dicho, no sólo la temática
-        if len(raices & _raices_de(texto)) < 4:
+        if len(raices & _raices_de(texto)) < 3:
             continue
         extra.append(i)
     return sorted(extra)
@@ -149,7 +149,13 @@ def research(ep: Episode) -> None:
         data = _llm_json([{"role": "system", "content": prompt},
                           {"role": "user", "content": "\n\n".join(lote)}],
                          tag="research", episode=ep.slug)
-        candidatos += [c for c in (data.get("claims") or []) if str(c.get("claim", "")).strip()]
+        for c in (data.get("claims") or []):
+            if not str(c.get("claim", "")).strip():
+                continue
+            idxs = c.get("source_indices") or []
+            c["source_indices"] = [int(i) for i in idxs if (isinstance(i, int) or
+                                    (isinstance(i, str) and i.strip().isdigit()))]
+            candidatos.append(c)
     if not candidatos:
         raise SystemExit("research: el LLM no extrajo ninguna afirmación de las fuentes.")
 
