@@ -122,7 +122,7 @@ Estado de gates: {json.dumps(gates_out, ensure_ascii=False, indent=2)}
   verificar en https://www.facebook.com/business/help/1604287853035214 antes de fijar números.
 """, encoding="utf-8")
     ep.write_json("publicacion/descripciones.json", {"titulo": title, "descripcion": desc,
-                                                     "fuentes": ep.read_state("fuentes", [])})
+                                                     "fuentes": ep.read_state().get("fuentes", [])})
     ep.set_stage("publicacion", "checklist_listo")
     print(f"  checklist -> {path.relative_to(ep.dir)} | publicar sigue BLOQUEADO hasta aprobación humana")
     return path

@@ -266,8 +266,16 @@ def run_auto(args) -> None:
             estado_registro = "revision_pendiente"
         elif config.auto_publish() or tele_revision.autonomia_total():
             # Decisión del dueño 2026-11-05 (.env AUTO_PUBLISH=true): la fábrica publica sola.
-            # La barrera ya no es "paso por Telegram" sino el QC medido del máster y el gate
-            # de título; el aviso por Telegram sigue yendo, pero como registro de lo publicado.
+            # La barrera ya no es "paso por Telegram" sino el QC medido del máster, el gate de
+            # título y los PROTOCOLOS VIRALES EXPERTOS (factory/validacion_viral); el aviso por
+            # Telegram sigue yendo, pero como registro de lo publicado. La publicación real es
+            # por Zernio (Facebook + YouTube).
+            from factory import validacion_viral as validacion_viral
+            validacion = validacion_viral.validar_produccion_viral(ep)
+            if not validacion.get("ok") and validacion.get("criticos"):
+                raise SystemExit(
+                    "VALIDACIÓN VIRAL EXPERTA BLOQUEÓ LA PUBLICACIÓN (por Zernio): "
+                    + " | ".join(validacion.get("criticos")))
             print("  AUTO_PUBLISH ON: publico YouTube + Facebook por Zernio (QC del máster aprobado)")
             resultado = publicacion.publicar_automatico(ep, no_publish=False)
             tele_revision.notificar_autonomia(ep.slug)
@@ -287,6 +295,12 @@ def run_auto(args) -> None:
         # Cómic diario (pedido del dueño 2026-11-07): se produce DESPUÉS del video y se
         # publica en Facebook. Va aislado: si falla, el video ya salió y la corrida no cambia.
         try:
+            from factory import validacion_viral as validacion_viral
+            vcomic = validacion_viral.validar_comic_viral(ep.slug)
+            if not vcomic.get("ok") and vcomic.get("gates", {}).get("viral_comic"):
+                raise RuntimeError(
+                    "VALIDACIÓN VIRAL EXPERTA COMICS BLOQUEÓ LA SALIDA: "
+                    + "; ".join(vcomic.get("gates", {}).get("viral_comic") or []))
             from pipeline.comics import ciclo as comics
             comic = comics.producir(ep, publicar=not args.no_publicar)
             detalle = f" · {comic['paginas']} páginas" if comic.get("paginas") else ""
