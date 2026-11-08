@@ -25,6 +25,10 @@
   (vía Zernio), conectores MCP, Oficina 3D (carrusel 3D de agentes).
 - **Reciclado inteligente de imágenes:** consume caché antes de pedir nuevas (≈ mitad de costo).
 - **Publicación autónoma diaria** con gates de QC, título y flag sintético como cinturón de seguridad.
+- **Validación viral experta:** antes de publicar por Zernio se corrigen, con protocolos propios
+  (`factory/validacion_viral.py`), los controles de creatividad/retención — estimulación visual,
+  emoción universal, recompensa narrativa en el guion; hook + giro + Ki-Sho-Ten-Ketsu + ≥15
+  viñetas + grillas 3 bandas en el cómic.
 - **Identidad visual viral:** emoción universal + miniatura (packaging) + hook de 3 segundos
   en cada idea; ritmo Ki-Sho-Ten-Ketsu en cómics.
 
@@ -73,6 +77,7 @@ Variables principales en `.env`:
 | `FACTORY_PUBLISH` | `1` publica de forma autónoma (default en compose) |
 | `KF_RECICLADO_CADA` | cada cuántas escenas se recicla imagen (`2` = mitad) |
 | `OLLAMA_BASE_URL` | endpoint de Ollama (LLM local, gratis) |
+| `OPENAI_API_KEY` | API key OpenAI (GPT Image) — nuevo salvapantallas de la cascada de imágenes |
 | `PORT` (factory) | `8610` (REST + WebSocket) |
 
 El panel permite autorizar/desautorizar publicación en caliente

@@ -84,6 +84,15 @@ MODELOS = {
         "extension": "png",
         "params": lambda w, h, steps, seed: {"w": w, "h": h, "seed": seed},
     },
+    "openai": {
+        # GPT Image (gpt-image-1) vía API OpenAI: nuevo salvapantallas de la cascada
+        # cuando Cloudflare Workers AI agota la cuota gratis (HTTP 429) o el worker cae.
+        # Requiere OPENAI_API_KEY; se evalúa sólo si la key existe (ver disponible()).
+        "nombre": "openai/gpt-image-1",
+        "respuesta": "openai",
+        "extension": "png",
+        "params": lambda w, h, steps, seed: {"size": "1024x1024"},
+    },
 }
 
 # Cadena de fallbacks: el primario es el que pidió el guion (flux/Cloudflare por
@@ -93,9 +102,10 @@ MODELOS = {
 # igual que ya estaba. Cada eslabón decide con su propia disponibilidad — la
 # cascada no exige las credenciales del primario si no las va a usar.
 CADENA = {
-    "flux": ["pollinations", "hf-space", "gemini-imagen"],
-    "dreamshaper": ["pollinations", "hf-space", "gemini-imagen"],
-    "sdxl": ["pollinations", "hf-space", "gemini-imagen"],
+    "flux": ["openai", "pollinations", "hf-space", "gemini-imagen"],
+    "dreamshaper": ["openai", "pollinations", "hf-space", "gemini-imagen"],
+    "sdxl": ["openai", "pollinations", "hf-space", "gemini-imagen"],
+    "openai": [],
     "pollinations": ["hf-space", "gemini-imagen"],
     "hf-space": ["pollinations", "gemini-imagen"],
     "gemini-imagen": [],
@@ -297,10 +307,40 @@ def _crudos_gemini(prompt: str) -> bytes:
     return crudos
 
 
+def _crudos_openai(prompt: str, w: int, h: int, seed: int, steps: int | None) -> bytes:
+    """GPT Image (gpt-image-1) vía API OpenAI. Falla con RuntimeError si no hay key o si
+    la API corta (429/5xx) — la cascada escala al siguiente eslabón sin caer."""
+    import os
+    from io import BytesIO
+    from PIL import Image
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("sin OPENAI_API_KEY en .env: no se puede usar openai/gpt-image-1")
+    body_payload = {"model": "gpt-image-1", "prompt": prompt, "n": 1, "size": "1024x1024"}
+    rr = llm.requests.post("https://api.openai.com/v1/images/generations", timeout=180,
+                           headers={"Authorization": f"Bearer {key}",
+                                    "Content-Type": "application/json"},
+                           json=body_payload)
+    if rr.status_code != 200:
+        raise RuntimeError(f"imagen openai falló: HTTP {rr.status_code} {rr.text[:200]}")
+    data = rr.json().get("data") or [{}]
+    b64 = (data[0] or {}).get("b64_json") if data else None
+    if not b64:
+        raise RuntimeError(f"openai no devolvió imagen: {str(rr.json())[:200]}")
+    crudos = base64.b64decode(b64)
+    if not (crudos.startswith(b"\x89PNG") or crudos.startswith(b"\xff\xd8\xff")):
+        buf = BytesIO()
+        Image.open(BytesIO(crudos)).convert("RGB").save(buf, format="JPEG", quality=92)
+        crudos = buf.getvalue()
+    return crudos
+
+
 def _crudos_por_proveedor(modelo_proveedor: str, prompt: str, w: int, h: int,
                           seed: int, steps: int | None) -> bytes:
     if modelo_proveedor == "gemini-imagen":
         return _crudos_gemini(prompt)
+    if modelo_proveedor == "openai":
+        return _crudos_openai(prompt, w, h, seed, steps)
     if modelo_proveedor == "pollinations":
         return _crudos_pollinations(prompt, w, h, seed)
     if modelo_proveedor == "hf-space":
@@ -393,6 +433,10 @@ def disponible(modelo: str = "flux") -> tuple[bool, str]:
             import gradio_client  # noqa: F401
         except ImportError:
             return False, "gradio_client no instalado (pip install gradio_client)"
+        return True, ""
+    if modelo == "openai":
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            return False, "sin OPENAI_API_KEY en .env (openai/gpt-image-1)"
         return True, ""
     config.load_env()
     if not os.environ.get("CLOUDFLARED_WORKER_AI", ""):
