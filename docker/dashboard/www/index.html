@@ -305,10 +305,15 @@
       <div class="seccion">
         <div class="hf-cab" style="margin-bottom:14px;">
           <h2 class="sec-tit">Oficina 3D — agentes y actividad</h2>
-          <p class="cm-det" style="margin:0;">Escena 3D de la fábrica: cada agente es un personaje, su color indica estado (verde ok, azul trabajando, rojo error). Arrastrá para orbitar, scroll para zoom.</p>
+          <p class="cm-det" style="margin:0;">Central de operaciones: cada agente tiene su estación en un carrusel 3D. Gira solo; arrastrá con el mouse para recorrerlo y hacé doble clic sobre una estación para traerla al frente.</p>
         </div>
         <div id="of3D" style="position:relative; width:100%; height:640px; min-height:480px; background:#0b1120; border:1px solid var(--borde); border-radius:var(--radio); overflow:hidden;">
           <div class="of-3d-aviso" style="position:absolute; left:12px; top:12px; color:var(--tinta-2); font:12px var(--mono);">Cargando la oficina 3D…</div>
+          <div class="of-3d-cam">
+            <button data-cam="mas" title="Acercar">+</button>
+            <button data-cam="menos" title="Alejar">−</button>
+            <button data-cam="ver" title="Ver el carrusel entero">⤢</button>
+          </div>
         </div>
       </div>
     </section>

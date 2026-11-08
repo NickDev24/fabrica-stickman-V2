@@ -75,6 +75,12 @@ async function POST(url, body) {
 }
 
 /* ─────────────────────────── navegación básica ───────────────────────── */
+// Estado del módulo 3D. Vive ARRIBA del archivo: `init()` corre en la línea
+// final y con `#oficina3d` en la URL monta la vista en el mismo tick; si estos
+// `let` quedan más abajo, el acceso cae en TDZ ("Cannot access before
+// initialization") y la oficina nunca arranca cargando directo por hash.
+let _of3dModulo = null, _of3dMontado = false, _of3dMontando = null;
+
 function cambiarVista(v) {
   S.vista = v;
   $$(".vista").forEach((n) => (n.hidden = n.id !== `vista-${v}`));
@@ -1016,7 +1022,6 @@ init().catch((e) => console.error(e));
 
 
 /* ─────────────────────────── Oficina 3D ───────────────────────── */
-let _of3dModulo = null, _of3dMontado = false, _of3dMontando = null;
 async function montarOficina3D() {
   const caja = document.getElementById("of3D");
   if (!caja) return;
@@ -1045,6 +1050,6 @@ async function montarOficina3D() {
     await _of3dMontando;
   } catch (e) {
     if (aviso) { aviso.hidden = false; aviso.textContent = "La Oficina 3D no arrancó: " + String((e && e.message) || e).slice(0, 120); }
-    console.error("oficina3d", e);
+    console.error("oficina3d", e, (e && e.stack) || "");
   }
 }

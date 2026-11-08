@@ -1,55 +1,68 @@
-/* ═══ OFICINA 3D — agentes y actividad desde /radar/oficina ═══ */
+/* ═══ OFICINA 3D V2 — CARRUSEL DE ESTACIONES ═══════════════════════════════
+   Reescribe la oficina completa: se va la sala rectangular (paredes, techo,
+   pasillo, mesa de reuniones) y entra una CENTRAL DE OPERACIONES circular.
+
+   · Un dais circular flotante sobre un piso reflectante oscuro.
+   · N estaciones de trabajo (una por agente) alrededor del círculo,
+     cada una con su plataforma, su trim de color de estado, su personaje
+     con animación, su pantalla (atlas canvas, un solo draw para todas)
+     y su rótulo con nombre y rol.
+   · Rotación automática lenta (≈ 45 s por vuelta). El usuario puede
+     arrastrar horizontal para recorrer los agentes; al soltar queda la
+     inercia y, luego del silencio, vuelve el giro automático.
+   · Click / doble-click sobre una estación: el carrusel la trae al frente,
+     un spot de escenario la ilumina y las demás siguen visibles alrededor.
+   · Núcleo holográfico al centro: colimador de la fábrica con el resumen
+     vivo (medio, agentes por estado) y el cartel del medio.
+
+   Se conserva sin cambios el contrato con la app:
+   montar(caja, datos, {onSeleccion}) / actualizar(datos) / focar(id) /
+   pausar / reanudar / destruir / motivo / soportado,
+   y los ganchos __OF3D_LISTO__ / __OF3D_FOCAR__ / __OF3D_PC__ /
+   __OF3D_ATLAS__ / __OF3D_AUDIT__ / __OF3D_INFO__.
+   Los datos siguen viniendo de /api/oficina: nada es decorativo — nombre,
+   rol, estado, tarea en curso, hoy, y turnos perdidos son del payload. */
 
 import * as THREE from '../vendor/three/three.module.min.js';
 import { GLTFLoader } from '../vendor/three/jsm/loaders/GLTFLoader.js';
-import { RoundedBoxGeometry } from '../vendor/three/jsm/geometries/RoundedBoxGeometry.js';
 import { CSS2DRenderer, CSS2DObject } from '../vendor/three/jsm/renderers/CSS2DRenderer.js';
 import { clone as clonarEsqueleto } from '../vendor/three/jsm/utils/SkeletonUtils.js';
 import { mergeGeometries } from '../vendor/three/jsm/utils/BufferGeometryUtils.js';
 
-/* ── la oficina de un medio ─────────────────────────────────────────────────── */
-const CELDA_X = 3.2, CELDA_Z = 3.6;      // puesto amplio, premium
-const MAX_COLS = 4;                       // sala amplia, menos hacinamiento
-const BANDA = 5.2;                        // gran sala de reuniones
-const PARED = 0.30, ALTO_FONDO = 4.2, ALTO_LATERAL = 3.0;
+/* ── geometría del carrusel ────────────────────────────────────────────────── */
+const SEP_IDEAL = 3.5;      // ancho cómodo de un puesto sobre el anillo (m)
+const RADIO_MIN = 4.6;      // a esta distancia ya se respiran 6 puestos
+const RADIO_MAX = 15;       // roster gigante: se aprieta el paso, no el kiddie
+const ALTURA_DAI_S = 0.34;  // el dais del carrusel está levemente elevado
+const TORNA = 0.138;        // rad/s del giro automático (≈ 45 s la vuelta)
+const FALTA_S = 3.2;        // segundos de silencio antes de volver a girar
+const DUREZA_FOCO = 4.2;    // cuán rápido la estación vía al frente
+const FRICCION = 3.1;       // inercia tras soltar el arrastre (1/s)
 
-/* ── el edificio que lo contiene todo ───────────────────────────────────────── */
-// Sin PASILLO la sala terminaba en una losa cortada y se veía el color del fog:
-// eso es el "fondo blanco vacío" que vio el operator. El edificio envuelve la
-// sala con piso corrido, muro perimetral y luminarias, y la niebla pasa al tono
-// de pared, así que nunca hay un hueco de color plano en el encuadre.
-const PASILLO = 5.0, ALTO_EDIF = 5.0, ESPESOR = 0.40;
-
-const PAL = {
-  piso: '#2a2520', yeso: '#3a3530', cornisa: '#4a4540',
-  alfombra: '#4a3f35',
-  // `fierro`: el metal de la luminaria. Neutro y oscuro — el verde `marco` que
-  // estaba declarado y nunca se usaba hacía que el perfil se leyera como un
-  // objeto flotando en el medio de la sala en vez de como parte del techo.
-  fierro: '#5b564c',
-  pasillo: '#1a1f33', exterior: '#0d1220', zocalo: '#2a3050', luminaria: '#fff2d8',
+/* ── la central de operaciones ─────────────────────────────────────────────── */
+const CB = {
+  dais: '#0d141e',        // el disco grande
+  pedestal: '#131c28',    // el pedestal de cada estación
+  piso: '#070a10',        // el piso exterior, reflectante y lejano
+  marca: '#131f2b',       // anillos guía sobre el dais
+  acento: '#22d3ee',      // cian del núcleo + marcas
+  acento2: '#3b82f6',     // azul de los faros remotos
+  metal: '#232f3d',
 };
-// El fondo NO es un color plano: es una gradación de pared lejana. Con niebla al
-// tono de muro, lo que asoma por encima del edificio se lee como ambiencia de
-// sala grande, no como un rectángulo blanco detrás de la oficina.
-// El stop claro estaba en #c9beaa y, estirado en el cuadro, formaba UNA franja
-// horizontal pálida a un tercio de la altura: el segundo "caño" del metegol. Se
-// baja el brillo del centro y se aprieta la niebla para que el horizonte no lave.
-const CIELO = ['#0a0e1a', '#1a1f33', '#2a3050', '#1a1f33'];
-const NIEBLA = { color: '#0a0e1a', cerca: 30, lejos: 150 };
-// Tope de la elevación de cámara. El muro perimetral que cierra el vacío mide
-// ALTO_EDIF y la cámara orbita FUERA del edificio: a 1,45 rad el rayo al centro
-// cruzaba el muro por debajo de su altura y la sala desaparecía detrás de la
-// fachada. Con 1,22 el ojo siempre pasa por arriba del muro de enfrente.
-const FASE_MAX = 1.10;
+// El fondo es una gradación vertical — nunca una pared ni un color plano.
+// La niebla funde el horizonte al mismo tono, así no hay borde duro jamás.
+const CIELO = ['#04060c', '#0a1220', '#0e1728', '#050810'];
+const NIEBLA = { color: '#050810', cerca: 26, lejos: 120 };
 
 const LUZ = {
-  sol: '#ffd9a8', cielo: '#fff3e0', intensidadSol: 2.0,
-  // El relleno era `#ffffff` a 0,7: una luz blanca sin sombra que lavaba el piso
-  // y las bandas claras. Ahora entra teñida al yeso de la sala y más baja.
-  relleno: '#e8d5b7', intensidadRelleno: 0.8,
-  hemisferio: 1.6, exposicion: 1.15,
+  clave: '#dbe7ff', intensidadClave: 1.35,     // key fría, estilo estudio
+  hemisferio: 0.85, cielo: '#9db8e8', suelo: '#05070c',
+  nucleo: '#35e0ff', intensidadNucleo: 1.5,    // colimador central
+  fosa: '#4c6bff', intensidadFosa: 0.5,        // contraluz
+  exposicion: 1.12,
 };
+
+/* Estados: los mismos 5 colores que la Lista y los anillos históricos. */
 const COLOR = { ok: 0x4f9d69, error: 0xd94141, reposo: 0x8a8a8a, sinturno: 0xd9a441,
                  curso: 0x2f7ad1 };
 
@@ -57,9 +70,6 @@ const RUTA = '/oficina3d/';
 const MUEBLE = {
   escritorio: 'furniture/pub-workstation-v1.glb',
   silla: 'furniture/office-chair-v1.glb',
-  mesa: 'furniture/conference-table-v1.glb',
-  impresion: 'furniture/pub-print-bench-v1.glb',
-  pizarra: 'furniture/mobile-board-v1.glb',
 };
 const PERSONAJES = ['characters/office-bomi.glb', 'characters/office-seo.glb',
                     'characters/office-tae.glb'];
@@ -67,32 +77,30 @@ const PERSONAJES = ['characters/office-bomi.glb', 'characters/office-seo.glb',
 let R = null;                             // la escena montada, o null
 
 /* ── estado de un agente → visual ──────────────────────────────────────────── */
+// El backend desplegado manda estados 'ok' | 'reposo' | 'curso' (factoryd);
+// el payload histórico de los medios mandaba 'activo'. Ambos contratos viven.
+function activoDe(a){
+  return a.estado === 'ok' || a.estado === 'activo';
+}
 function colorDe(a){
-  // El azul es el latido: el anillo dice "está corriendo AHORA", algo que antes
-  // no se podía saber porque el backend solo informaba el registro del job.
+  // El azul es el latido: el anillo dice "está corriendo AHORA".
   if(a.en_curso) return 'curso';
   if(a.estado === 'reposo') return 'reposo';
-  if(a.estado !== 'activo') return 'sinturno';
-  const u = a.ultima;
-  if(u && (u.ok === false || u.perdido)) return 'error';
-  return 'ok';
+  if(activoDe(a)){
+    const u = a.ultima;
+    if(u && (u.ok === false || u.perdido)) return 'error';
+    return 'ok';
+  }
+  return 'sinturno';
 }
 
-// El globo SOLO grita lo que hay que mirar: un turno que terminó mal. El tiempo
-// ("hace 12 min") se retiró de la escena por pedido del operator — vive en la
-// ficha, que es donde se lee. Con globos de tiempos en los 26 puestos la escena
-// volvía a ser la Lista pero en 3D.
+// El globo SOLO grita lo que hay que mirar: un turno que terminó mal.
 function globoDe(a){
   const u = a.ultima;
   if(!u) return null;
   if(u.ok === false || u.perdido)
     return { txt: '⚠ ' + String(u.error || 'turno perdido').slice(0, 46), mal: true };
   return null;
-}
-
-function grilla(n){
-  const cols = Math.max(1, Math.min(MAX_COLS, Math.ceil(Math.sqrt(Math.max(n, 1) * 1.15))));
-  return { cols, rows: Math.max(1, Math.ceil(Math.max(n, 1) / cols)) };
 }
 
 // La identidad visual depende del id, no del lugar que ocupa en el payload.
@@ -102,51 +110,13 @@ function modeloDe(id){
   return h % PERSONAJES.length;
 }
 
+function acotado(v, min, max){ return Math.min(max, Math.max(min, v)); }
+
 /* ── las texturas que se generan en canvas, una vez por página ─────────────── */
-// Son diminutas (256²) y compartidas entre montajes: por eso `desarmarEscena()`
-// dispone los MATERIALES pero nunca sus `map`. Disponer una textura compartida
-// dejaría ciego el siguiente montaje.
-const TEX = { piso: null, sombra: null, cielo: null };
+// Compartidas entre montajes: `desarmarEscena()` dispone los MATERIALES pero
+// nunca sus `map`.
+const TEX = { limpiar: null, sombra: null, cielo: null, piso: null };
 
-function texturaPiso(){
-  if(TEX.piso) return TEX.piso;
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = PAL.piso; g.fillRect(0, 0, 256, 256);
-  const tablas = 4, alto = 256 / tablas;
-  for(let i = 0; i < tablas; i++){
-    const y = i * alto;
-    // La junta entre tablas es lo que hace que un piso grande no se lea como
-    // una mesa lisa: sin ella la losa se ve plastificada.
-    // El alterno era `rgba(255,255,255,.06)`, o sea una tabla BLANCA cada 64 px
-    // sobre un material con `color:#ffffff` y UV de 2,2 m: una franja clara cada
-    // 1,1 m. La veta se marca alternando dos
-    // tintes sombra, que es como se ve un parquet de verdad bajo luz rasante.
-    g.fillStyle = i % 2 ? 'rgba(0,0,0,.05)' : 'rgba(0,0,0,.016)';
-    g.fillRect(0, y, 256, alto);
-    for(let j = 0; j < 22; j++){
-      g.strokeStyle = 'rgba(94,74,50,' + (0.04 + Math.random() * 0.06) + ')';
-      g.lineWidth = 1;
-      const yy = y + Math.random() * alto;
-      g.beginPath(); g.moveTo(0, yy);
-      g.bezierCurveTo(70, yy + (Math.random() * 5 - 2.5), 180, yy + (Math.random() * 5 - 2.5), 256, yy);
-      g.stroke();
-    }
-    g.fillStyle = 'rgba(58,44,28,.5)';
-    g.fillRect(0, y + alto - 2, 256, 2);
-    g.fillRect((i * 97) % 256, y, 2, alto);       // junta de testa, escalonada
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  TEX.piso = t;
-  return t;
-}
-
-// Sombra falsa: una elipse suave bajo el personaje. Con `shadowMap.autoUpdate`
-// apagado las sombras reales se calculan una vez, y esto es lo que hace que el
-// cuerpo pise el piso aunque la escena no se re-sombree en cada cuadro.
 function texturaSombra(){
   if(TEX.sombra) return TEX.sombra;
   const c = document.createElement('canvas');
@@ -176,23 +146,48 @@ function texturaCielo(){
   return t;
 }
 
+// El piso circular del dais: no parquet — grano técnico. Concentricidad y
+// marcas radiales tenues le dan a la sala de control su escala.
+function texturaPlato(){
+  if(TEX.piso) return TEX.piso;
+  const T = 1024, c = document.createElement('canvas');
+  c.width = c.height = T;
+  const g = c.getContext('2d'), C = T / 2;
+  g.fillStyle = CB.piso; g.fillRect(0, 0, T, T);
+  // Vetas finas horizontales: metal cepillado, refleja sin espejar.
+  for(let i = 0; i < 90; i++){
+    g.strokeStyle = 'rgba(120,160,200,' + (0.012 + Math.random() * 0.02) + ')';
+    g.lineWidth = 1;
+    const y = Math.random() * T;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(T, y); g.stroke();
+  }
+  // Anillos concéntricos al dais (el UV de la elipse se mapea polar después).
+  for(let r = 60; r < C; r += 78){
+    g.strokeStyle = 'rgba(90,140,190,' + (0.05 + Math.random() * 0.05) + ')';
+    g.lineWidth = r % (78 * 2) < 78 ? 1.5 : 4;
+    g.beginPath(); g.arc(C, C, r, 0, Math.PI * 2); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  TEX.piso = t;
+  return t;
+}
+
 /* ── la PC de cada agente: UN atlas, UN draw ───────────────────────────────── */
-// La pantalla NO es un objeto del GLB: el mueble viene instanciado (11 primitivas
-// sin nombre) y una pantalla por agente sería 26 meshes, 26 materiales y 26 draws
-// más una textura cada uno. Acá es un canvas compartido en grilla —una celda por
-// escritorio— y la geometría de los vidrios es UN solo mesh fusionado: 1 draw y
-// 1 subida de textura por repintado, no por agente.
+// La pantalla NO es un objeto del GLB: el mueble viene instanciado y una
+// pantalla por agente sería n meshes, n materiales y n texturas. Acá es un
+// canvas compartido en grilla —una celda por estación— y la geometría de los
+// vidrios es UN solo mesh fusionado: 1 draw y 1 subida de textura por
+// repintado, no por agente.
 //
-// `PANTALLA` está medido sobre `pub-workstation-v1.glb`: la primitiva más alta
-// (mesh 8 / node 9) es el monitor, y su caja en coordenadas del mueble es
-// x −0.764..−0.477, y 0.89..1.409, z 0.075..0.365. La cara que mira a la cámara
-// es la de −Z, o sea la ESPALDA del monitor (el agente está sentado al +Z y mira
-// a −Z, hacia el vidrio). Por eso `cara:'camara'`: el panel se mostra como en una
-// vista isométrica de oficina, de frente al que mira, aunque el mueble tenga el
-// vidrio del otro lado. Con `caja:true` se dibuja el wireframe de la caja real del
-// monitor y se puede verificar/ajustar `w/h/x/y/z` desde el arnés.
-const PANTALLA = { w:0.26, h:0.47, x:-0.62, y:1.1495, z:0.06, cara:'camara', caja:false };
-const CELDA = { w:128, h:232, cols:4 };        // 128/232 ≈ la proporción del vidrio
+// `PANTALLA` está medido sobre `pub-workstation-v1.glb`: la cara visible del
+// monitor mira al −Z local de la estación, que es el lado que después queda
+// mirando a la cámara: la estación se orienta con fase π (ver FASE) y así el
+// personaje queda detrás del escritorio, al lado del núcleo, y su pantalla
+// se lee desde afuera del anillo.
+const PANTALLA = { w: 0.26, h: 0.47, x: -0.62, y: 1.1495, z: 0.06, cara: 'camara', caja: false };
+const CELDA = { w: 128, h: 232, cols: 4 };        // 128/232 ≈ la proporción del vidrio
 
 const Pantallas = { atlas: null };
 
@@ -207,8 +202,6 @@ function asegurarAtlas(n){
                         cols, rows, firmas: [], x: 0, y: 0 };
   }
   const at = Pantallas.atlas;
-  // La grilla se reusa solo si alcanza: achicar el canvas descartaría las celdas
-  // de los montajes anteriores, y agrandarlo deja basura pintada donde no hay vidrio.
   if(at.canvas.width !== ancho || at.canvas.height < alto || at.rows !== rows){
     at.canvas.width = ancho; at.canvas.height = alto;
     at.firmas = [];
@@ -225,8 +218,8 @@ function asegurarAtlas(n){
 }
 
 // UVs horneadas por celda: el quad de la pantalla k muestrea SOLO su casilla.
-// Con `cara:'camara'` el plano está girado π para mirar a la cámara, así que se
-// espeja `u` — si no, todo el texto saldría al revés.
+// Con `cara:'camara'` el plano está girado π para mirar al espectador, así que
+// se espeja `u` — si no, todo el texto saldría al revés.
 function hornearUVs(geo, k, at){
   const cx = k % at.cols, cy = Math.floor(k / at.cols);
   const u0 = cx / at.cols, du = 1 / at.cols;
@@ -240,21 +233,10 @@ function hornearUVs(geo, k, at){
   uv.needsUpdate = true;
 }
 
-function quadDePantalla(k, at, p){
-  const geo = new THREE.PlaneGeometry(PANTALLA.w, PANTALLA.h);
-  hornearUVs(geo, k, at);
-  const m = new THREE.Matrix4()
-    .makeTranslation(p.x + PANTALLA.x, PANTALLA.y, p.z + PANTALLA.z);
-  if(PANTALLA.cara === 'camara') m.multiply(new THREE.Matrix4().makeRotationY(Math.PI));
-  geo.applyMatrix4(m);
-  return geo;
-}
-
 /* ── qué se pinta en cada vidrio (solo lo que llegó del backend) ────────────── */
 function firmaDePantalla(p){
   const a = p.a;
-  // `segundos` se redondeja a 30: sin eso cada refresco reescribiría la celda y
-  // subiría el atlas entero por un cronómetro que nadie lee tan rápido.
+  // `segundos` se redondea a 30: sin eso cada refresco reescribiría la celda.
   const s = a.segundos == null ? '' : Math.round(a.segundos / 30);
   return [a.rol || '', a.estado || '', a.en_curso ? 1 : 0, s, a.faena || '',
           a.hoy == null ? '' : a.hoy, a.hoy_texto || '', p.aviso || '',
@@ -263,8 +245,7 @@ function firmaDePantalla(p){
 
 function envolver(ctx, txt, ancho){
   // Un token que no cabe solo (`laburo_changa_rosario`, una URL en un error) se
-  // parte a la fuerza: si no, desborda la celda y el vecino —que se pinta después,
-  // con su fondo— lo borra a media palabra.
+  // parte a la fuerza: si no, desborda la celda y el vecino lo borra.
   const partes = [];
   for(const w of String(txt).split(/\s+/)){
     if(!w) continue;
@@ -293,18 +274,19 @@ function pintarPantalla(at, p, forzar){
   if(!forzar && at.firmas[k] === firma) return false;
   at.firmas[k] = firma;
   const g = at.ctx, X = (k % at.cols) * CELDA.w, Y = Math.floor(k / at.cols) * CELDA.h;
-  const apagada = a.estado !== 'activo';
+  const dormido = !activoDe(a);
   const borde = css(COLOR[colorDe(a)] ?? COLOR.sinturno);
-  // La celda se pinta ENTERA: si no, el texto viejo del refresco anterior se
-  // queda encima y la pantalla muestra dos faenas a la vez.
-  g.fillStyle = apagada ? '#14161a' : '#0b1016';
+  // La celda se pinta ENTERA: si no, el texto viejo del refresco anterior queda
+  // encima y la pantalla muestra dos faenas a la vez.
+  g.fillStyle = a.estado === 'reposo' ? '#14161a' : '#0b1016';
+  if(dormido && a.estado !== 'reposo') g.fillStyle = '#14161a';
   g.fillRect(X, Y, CELDA.w, CELDA.h);
   g.strokeStyle = borde; g.lineWidth = 3;
   g.strokeRect(X + 1.5, Y + 1.5, CELDA.w - 3, CELDA.h - 3);
-  g.fillStyle = apagada ? '#4a5157' : borde;
+  g.fillStyle = dormido ? '#4a5157' : borde;
   g.fillRect(X + 3, Y + 3, CELDA.w - 6, 26);
   g.textBaseline = 'top';
-  g.fillStyle = apagada ? '#7d858c' : '#08090b';
+  g.fillStyle = dormido ? '#7d858c' : '#08090b';
   g.font = 'bold 12px system-ui, sans-serif';
   const rol = envolver(g, (a.rol || a.nombre || '').toUpperCase(), CELDA.w - 12).slice(0, 2);
   rol.forEach((l, i) => g.fillText(l, X + 6, Y + 8 + i * 11));
@@ -312,8 +294,7 @@ function pintarPantalla(at, p, forzar){
   let y = Y + 36;
   g.font = '13px system-ui, sans-serif';
   if(p.aviso){
-    // La franja de lo que espera un humano: es HEURÍSTICA del frente (un bloqueo
-    // de red no es por agente) y por eso dice "red", nunca "este agente midió X".
+    // La franja de lo que espera un humano: es HEURÍSTICA del frente, dice "red".
     g.fillStyle = css(COLOR.sinturno);
     g.fillRect(X + 3, y, CELDA.w - 6, 20);
     g.fillStyle = '#1a1408'; g.font = 'bold 10.5px system-ui, sans-serif';
@@ -322,7 +303,7 @@ function pintarPantalla(at, p, forzar){
     y += 26;
     g.font = '13px system-ui, sans-serif';
   }
-  if(apagada){
+  if(dormido){
     g.fillStyle = '#8d959c';
     g.fillText(a.estado === 'reposo' ? 'EN REPOSO' : 'SIN TURNO', X + 6, y + 6);
     g.font = '11px system-ui, sans-serif';
@@ -338,9 +319,6 @@ function pintarPantalla(at, p, forzar){
     cuerpo.forEach((l, i) => g.fillText(l, X + 6, y + i * 15));
     y += Math.max(1, cuerpo.length) * 15 + 8;
     g.fillStyle = borde; g.font = 'bold 11px system-ui, sans-serif';
-    // Dos líneas, no una: "TRABAJANDO ⏱300s" mide ~122px y la celda tiene 116
-    // útiles, así que el vecino —que se pinta después con su fondo— se comía los
-    // segundos. Sobra lugar vertical (la celda mide 232).
     g.fillText('TRABAJANDO', X + 6, y);
     if(a.segundos != null){
       g.fillText('⏱ ' + Math.round(a.segundos / 30) * 30 + 's', X + 6, y + 13);
@@ -383,105 +361,7 @@ function repintarPantallas(forzar){
   if(toca) pc.atlas.tex.needsUpdate = true;
 }
 
-/* ── constructores compartidos por las dos escenas ──────────────────────────── */
-// Un pool de cajas redondeadas: el edificio entero (losas, paredes, zócalos,
-// bandas de pasillo) son INSTANCIAS de una misma geometría escalada, con color
-// por instancia. Cien `Mesh` serían cien draws y cien geometrías; esto es uno.
-function Pool(padre, material, op){
-  const o = op || {};
-  // El radio se mide sobre la caja UNITARIA y después se escala a mano: a 21 m de
-  // largo el filo redondeado salía de 0,41 m y aplastado a 7 cm de espesor, de
-  // 2 mm. O sea lentejas sin arista por todo el edificio. Se baja el radio y las
-  // piezas muy alargadas se hacen caja viva con `{roma:true}`.
-  const geo = o.roma ? new THREE.BoxGeometry(1, 1, 1)
-                     : new RoundedBoxGeometry(1, 1, 1, 2, 0.016);
-  const mat = material || new THREE.MeshStandardMaterial({ roughness: 0.92 });
-  const ms = [], cs = [], tmp = new THREE.Object3D();
-  return {
-    caja(w, h, d, x, y, z, color){
-      tmp.position.set(x, y, z); tmp.scale.set(w, h, d); tmp.rotation.set(0, 0, 0);
-      tmp.updateMatrix();
-      ms.push(tmp.matrix.clone()); cs.push(new THREE.Color(color));
-    },
-    construir(){
-      if(!ms.length) return null;
-      const im = new THREE.InstancedMesh(geo, mat, ms.length);
-      ms.forEach((m, i) => { im.setMatrixAt(i, m); im.setColorAt(i, cs[i]); });
-      im.instanceMatrix.needsUpdate = true;
-      if(im.instanceColor) im.instanceColor.needsUpdate = true;
-      // `sinSombra`: una lámpara colgada a 3,4 m proyectando su propia banda
-      // sobre la sala es literalmente la franja clara/flotante que se veía.
-      im.castShadow = !o.sinSombra; im.receiveShadow = true;
-      padre.add(im);
-      return im;
-    },
-  };
-}
-
-// Las luminarias comparten materiales y se agrupan para reducir los draws.
-function poolsLuz(g){
-  return {
-    // Difusor: caja viva (es una pieza alargada, ver `Pool`) y SIN sombra. El
-    // `emissive` a 0,22: a 0,85 la tira se autoiluminaba hasta el blanco puro y
-    // era indistinguible de una banda de luz sobre la niebla.
-    difusor: new Pool(g, new THREE.MeshStandardMaterial({
-      roughness: 0.8, emissive: PAL.luminaria, emissiveIntensity: 0.22,
-    }), { sinSombra: true, roma: true }),
-    // `roma` también acá: el brazo mide el 72 % del ancho del edificio (hasta
-    // 21 m) y con RoundedBox escalado el radio sería de 60 cm, o sea una
-    // salchicha. Un perfil de luminaria es arista viva.
-    marco: new Pool(g, new THREE.MeshStandardMaterial({ roughness: 0.5 }),
-      { sinSombra: true, roma: true }),
-  };
-}
-
-// El piso texturado: un solo plano con las UV multiplicadas por su tamaño, para
-// que la tabla conserve su escala en cualquier tamaño de sala.
-function pisoPlano(w, d, x, z, tile){
-  const geo = new THREE.PlaneGeometry(w, d);
-  const uv = geo.attributes.uv;
-  for(let i = 0; i < uv.count; i++)
-    uv.setXY(i, uv.getX(i) * (w / tile), uv.getY(i) * (d / tile));
-  uv.needsUpdate = true;
-  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    map: texturaPiso(), roughness: 0.88, color: '#ffffff',
-  }));
-  m.rotation.x = -Math.PI / 2;
-  m.position.set(x, 0, z);
-  m.receiveShadow = true;
-  return m;
-}
-
-// El envoltorio: muro perimetral alto, su zócalo y las luminarias que caen sobre
-// los pasillos. Es lo que reemplaza al vacío: la cámara, que está a ~13 m de
-// altura mirando hacia abajo, siempre encuentra muro o piso antes que el fondo.
-function edificio(pool, luz, carcasa, x0, z0, x1, z1){
-  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, w = x1 - x0, d = z1 - z0;
-  pool.caja(w + ESPESOR * 2, ALTO_EDIF, ESPESOR, cx, ALTO_EDIF / 2, z0 - ESPESOR / 2, PAL.exterior);
-  pool.caja(w + ESPESOR * 2, ALTO_EDIF, ESPESOR, cx, ALTO_EDIF / 2, z1 + ESPESOR / 2, PAL.exterior);
-  pool.caja(ESPESOR, ALTO_EDIF, d, x0 - ESPESOR / 2, ALTO_EDIF / 2, cz, PAL.exterior);
-  pool.caja(ESPESOR, ALTO_EDIF, d, x1 + ESPESOR / 2, ALTO_EDIF / 2, cz, PAL.exterior);
-  // Zócalo: sin él la pared nace del piso como un papel.
-  pool.caja(w, 0.16, 0.07, cx, 0.08, z0 + 0.035, PAL.zocalo);
-  pool.caja(w, 0.16, 0.07, cx, 0.08, z1 - 0.035, PAL.zocalo);
-  pool.caja(0.07, 0.16, d, x0 + 0.035, 0.08, cz, PAL.zocalo);
-  pool.caja(0.07, 0.16, d, x1 - 0.035, 0.08, cz, PAL.zocalo);
-  // Cornisa interior del muro: otra línea horizontal que da escala humana.
-  pool.caja(w + ESPESOR * 2, 0.1, ESPESOR + 0.08, cx, ALTO_EDIF - 0.05, z0 - ESPESOR / 2, PAL.cornisa);
-  pool.caja(w + ESPESOR * 2, 0.1, ESPESOR + 0.08, cx, ALTO_EDIF - 0.05, z1 + ESPESOR / 2, PAL.cornisa);
-  // LUMINARIAS. Antes: 5 barras continuas de 14-21 m, de 7 cm de canto, a 3,38 m,
-  // paralelas, autoiluminadas (emissive 0,85) y proyectando su propia banda, sin
-  // nada donde estar colgadas. Eso es exactamente la "franja blanca flotante" que
-  // hacía parecer un metegol. Ahora es un artefacto: perfil de metal de pared a
-  // pared (las puntas TOCAN el muro: por eso se lee montado y no flotando) y
-  // difusor en TRAMOS cortos con junta, y nada de esto tira sombra.
-  // No hay cielo raso: la sala se mira desde arriba. El brazo y la carcasa
-  // anclan visualmente las luminarias.
-  // Luminarias eliminadas: oficina lux sin luces flotantes.
-}
-
-// Agrupa por (geometría, material) para dibujar N puestos en pocos draws: 25
-// escritorios de 11 mallas son ~11 draws, no 275.
+/* ── instancias de muebles: N puestos en pocos draws ───────────────────────── */
 function Instanciador(padre){
   const grupos = new Map();
   const clave = o => o.geometry.uuid + '|' +
@@ -514,11 +394,9 @@ function Instanciador(padre){
 // Se cachea a nivel módulo: cambiar de medio o salir y volver de la vista no
 // vuelve a bajar 2 MB. Por eso el `dispose()` de la escena NUNCA toca estos
 // recursos: son de la caché compartida, no de la instancia.
-// La caché es POR ARCHIVO, no del conjunto: si un GLB se corta por una conexión
-// floja, se re-intenta ese y no se tiran los 7 que ya estaban abajo.
 let ASSETS = null;
 const BAJADO = new Map();
-const TOTAL_GLB = 5 + PERSONAJES.length;
+const TOTAL_GLB = 2 + PERSONAJES.length;
 let COMPARTIDO = null;              // uuids de geometría/material que son de la caché
 
 function bajar(c, ruta, intentos){
@@ -537,34 +415,29 @@ function bajar(c, ruta, intentos){
 function cargar(alProgreso){
   if(ASSETS) return ASSETS;
   const c = new GLTFLoader();
-  const rutas = [MUEBLE.escritorio, MUEBLE.silla, MUEBLE.mesa, MUEBLE.impresion,
-                 MUEBLE.pizarra, ...PERSONAJES];
+  const rutas = [MUEBLE.escritorio, MUEBLE.silla, ...PERSONAJES];
   let hechos = 0;
   const conProgreso = r => bajar(c, r, 3).then(g => {
     hechos++; if(alProgreso) alProgreso(hechos, TOTAL_GLB, r); return g;
   });
-  ASSETS = Promise.all(rutas.map(conProgreso)).then(([esc, silla, mesa, impr, piz, ...cuerpos]) => {
-    const propios = { escritorio: esc, silla, mesa, impresion: impr, pizarra: piz, cuerpos };
-    // La lista de lo compartido se arma UNA vez, sobre los GLB crudos: así el
-    // desarmado de la escena puede disponer todo lo demás sin tocar la caché.
-    COMPARTIDO = new Set();
-    for(const gltf of [esc, silla, mesa, impr, piz, ...cuerpos]){
+  ASSETS = Promise.all(rutas.map(conProgreso)).then(([esc, silla, ...cuerpos]) => {
+    const propios = { escritorio: esc, silla, cuerpos };
+    const COMPARTIDO_ = new Set();
+    for(const gltf of [esc, silla, ...cuerpos]){
       gltf.scene.traverse(o => {
         if(!o.isMesh) return;
-        COMPARTIDO.add(o.geometry.uuid);
-        for(const m of (Array.isArray(o.material) ? o.material : [o.material])) COMPARTIDO.add(m.uuid);
+        COMPARTIDO_.add(o.geometry.uuid);
+        for(const m of (Array.isArray(o.material) ? o.material : [o.material])) COMPARTIDO_.add(m.uuid);
       });
     }
+    COMPARTIDO = COMPARTIDO_;
     return propios;
   }).catch(e => { ASSETS = null; COMPARTIDO = null; throw e; });
   return ASSETS;
 }
 
 /* ── API pública ───────────────────────────────────────────────────────────── */
-// three r180 NO habla WebGL1: preguntar por cualquier contexto de WebGL mentiría
-// "sí" en un teléfono viejo que después revienta al crear el renderer. Se pide
-// webgl2 explícitamente y se dice el motivo, para que el fallback a Lista explique
-// algo más que "no arrancó".
+// three r180 NO habla WebGL1: pedir webgl2 explícitamente y decir el motivo.
 export function motivo(){
   try{
     if(!window.WebGLRenderingContext) return 'este navegador no tiene WebGL';
@@ -578,10 +451,8 @@ export function motivo(){
 export function soportado(){ return motivo() === ''; }
 
 /* ── montar/destruir serializados ───────────────────────────────────────────── */
-// Cambiar de medio mientras la sala está bajando dispara un segundo `montar` antes
-// de que el primero termine: los dos veían el escenario vacío, los dos construían,
-// y quedaban dos canvas con dos salas de 25 puestos montadas una encima de la otra
-// (50 rótulos, ~1000 draw calls). La cola hace que el montaje nuevo espere al
+// Cambiar de vista mientras la escena está bajando dispara un segundo `montar`
+// antes de que el primero termine. La cola hace que el montaje nuevo espere al
 // anterior y lo destruya, en vez de pisarlo.
 let cola = Promise.resolve();
 function enCola(f){
@@ -601,14 +472,19 @@ function tamanoDe(caja){
 // Dos frames: el primero dispara el layout pendiente, el segundo lo ve asentado.
 const esperarLayout = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
+/* Radio del anillo: n puestos no pueden pisarse. */
+function radioDe(n){
+  if(n <= 0) return RADIO_MIN;
+  return acotado(n * SEP_IDEAL / (Math.PI * 2), RADIO_MIN, RADIO_MAX);
+}
+
 async function montarReal(caja, datos, opciones = {}){
   await destruirReal();
   const raz = motivo();
   if(raz) throw new Error(raz);
-  const modo = 'oficina';
-  // La caja se mide DESPUÉS de la espera: cambiar de medio mientras la sala está
-  // bajando deja el hueco sin layout un instante, y un renderer que nace con el
-  // mínimo de 320×240 se queda chico para siempre si nadie lo rectifica.
+  // La caja se mide DESPUÉS de la espera: cambiar de vista mientras la escena
+  // está bajando deja el hueco sin layout un instante, y un renderer que nace
+  // con el mínimo de 320×240 se queda chico para siempre si nadie lo rectifica.
   await esperarLayout();
   const [ancho, alto] = tamanoDe(caja);
   const movil = window.innerWidth < 720 || Math.min(ancho, alto) < 460;
@@ -619,7 +495,9 @@ async function montarReal(caja, datos, opciones = {}){
   renderer.setSize(ancho, alto);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.shadowMap.autoUpdate = false;      // la sala es quieta: se sombrea una vez
+  // El carrusel GIRA: la sombra tiene que refrescarse. Resolución baja y áreas
+  // de sombra acotadas: el costo queda dominado por la escena, no por la luz.
+  renderer.shadowMap.autoUpdate = true;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = LUZ.exposicion;
   caja.appendChild(renderer.domElement);
@@ -633,33 +511,46 @@ async function montarReal(caja, datos, opciones = {}){
   scene.background = texturaCielo();
   scene.fog = new THREE.Fog(NIEBLA.color, NIEBLA.cerca, NIEBLA.lejos);
 
-  const camara = new THREE.PerspectiveCamera(46, ancho / alto, 0.1, 240);
-  const sol = new THREE.DirectionalLight(LUZ.sol, LUZ.intensidadSol);
-  sol.position.set(7, 12, -4);
-  sol.castShadow = true;
-  sol.shadow.mapSize.set(movil ? 512 : 1024, movil ? 512 : 1024);
-  sol.shadow.bias = -0.0006;
-  // `normalBias`: con un mapa de 1024 sobre ±18 m el texel mide 3,5 cm y el
-  // sesgo solo desplaza la figura de la sombra (peter-panning: los cuerpos
-  // flotan). Moviéndolo a lo largo de la normal se recupera el contacto.
-  sol.shadow.normalBias = 0.03;
-  const relleno = new THREE.DirectionalLight(LUZ.relleno, LUZ.intensidadRelleno);
-  relleno.position.set(-6, 5, 9);
-  scene.add(sol, new THREE.HemisphereLight(LUZ.cielo, '#b6a68c', LUZ.hemisferio), relleno);
+  const camara = new THREE.PerspectiveCamera(44, ancho / alto, 0.1, 260);
+
+  // Llanura de iluminación de estudio: key fría + hemisferio suave + contraluz.
+  // El núcleo aporta su colimador propio (PointLight cian) y el spot de
+  // escenario viaja con la estación del frente. Ni sol calido ni paredes.
+  const clave = new THREE.DirectionalLight(LUZ.clave, LUZ.intensidadClave);
+  clave.position.set(-6, 14, 9);
+  clave.castShadow = movil ? false : true;
+  clave.shadow.mapSize.set(1024, 1024);
+  clave.shadow.bias = -0.0006;
+  clave.shadow.normalBias = 0.03;
+  const fosa = new THREE.DirectionalLight(LUZ.fosa, LUZ.intensidadFosa * 0.45);
+  fosa.position.set(9, 5, -11);
+
+  const foco = new THREE.SpotLight('#bfe3ff', 2.4, 18, 0.55, 0.5, 1.4);
+  foco.position.set(0, 7.5, 12);
+  foco.castShadow = false;
+  const focoObjetivo = new THREE.Object3D();
+  foco.target = focoObjetivo;
 
   R = {
-    caja, renderer, etiquetas, scene, camara, sol, datos, movil, modo,
+    caja, renderer, etiquetas, scene, camara, clave, fosa, foco, focoObjetivo,
+    datos, movil, modo: 'carrusel',
     onSeleccion: opciones.onSeleccion || (() => {}),
     mov: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-    puestos: [], mixers: [], anillos: null, sombras: null, alfombras: null,
-    pantallas: null, cajas: null, cajasGeo: null,
-    g: null, sala: null,
-    previos: {}, caminando: 0, tiempo: 0, muebles: null,
+    puestos: [], mixers: [],
+    carrusel: null, radio: RADIO_MIN, dias: null, nucleo: null,
+    anillos: null, sombras: null, trims: null, faros: null, polvo: null,
+    pantallas: null, cajas: null, cajasGeo: null, cartel: null,
+    previos: {}, tiempo: 0,
+    // Geometría y meshes creados POR ESTE armado (piso, dais, guía, núcleo,
+    // faros, polvo): se disponen al desarmar, sin tocar la caché de GLB.
+    descartables: [],
     reloj: new THREE.Clock(), raf: 0, corriendo: false, sel: '',
     al: null, ro: null, ids: '', ancho, alto,
-    orbita: { th: -Math.PI / 2, ph: 0.9, r: 20, tr: 20, tx: 0, tz: 0, ttx: 0, ttz: 0 },
-    // Recorre la escena buscando instancias con matriz NaN (la GPU las descarta en
-    // silencio) y emisivos sobre el umbral (las franjas que se leían blancas).
+    // θ actual del carrusel (rad). El frente del anillo mira hacia +Z.
+    teta: 0, vueltas: 0, agarrado: null, ultimoToque: 0,
+    tetaPrev: -1,
+    // Girar de la pantalla a la escena buscando instancias con matriz NaN
+    // (la GPU las descarta en silencio) y emisivos sobre el umbral.
     instanciasRotas(){
       const mala = [];
       scene.traverse(o => {
@@ -674,7 +565,7 @@ async function montarReal(caja, datos, opciones = {}){
       });
       return mala;
     },
-    emisivosAltos(limite = 0.4){
+    emisivosAltos(limite = 0.9){
       const fuera = [];
       scene.traverse(o => {
         for(const m of (Array.isArray(o.material) ? o.material : [o.material]))
@@ -685,9 +576,8 @@ async function montarReal(caja, datos, opciones = {}){
     },
   };
 
-  // 45 s, no 15: son ~3 MB de mobiliario pasando por el gate del dominio, y un plazo
-  // corto mataba descargas que iban por buen camino. El progreso se ve en la barra de
-  // aviso, así que "tarda" no se confunde con "se colgó".
+  // 45 s: son ~2 MB de mobiliario pasando por el gate del dominio, y un plazo
+  // corto mataba descargas que iban por buen camino.
   const poner = txt => { if(aviso) aviso.textContent = txt; };
   poner('Bajando el mobiliario 0/' + TOTAL_GLB + '…');
   const assets = await Promise.race([
@@ -699,32 +589,25 @@ async function montarReal(caja, datos, opciones = {}){
   R.assets = assets;
 
   armar();
-  encuadrarTodo();
+  encuadrar();
   aplicarCamara();
   enlazar();
   reanudar();
-  // El aviso "Armando la oficina…" vive en la plantilla: si no se apaga, queda
-  // escrito sobre la escena terminada para siempre.
+  // El aviso "Armándola…" vive en la plantilla: si no se apaga queda encima.
   caja.querySelector('.of-3d-aviso')?.setAttribute('hidden', '');
 
   window.__OF3D_LISTO__ = true;
-  // El hook de prueba hace lo que un click: encuadra Y abre la ficha. Si solo
-  // moviera la cámara, el arnés verificaría un camino que el usuario no recorre.
+  // El hook de prueba hace lo que un click: centra Y dispara selección.
   window.__OF3D_FOCAR__ = id => {
     focar(id);
     const p = id && R && R.puestos.find(x => x.a.id === id);
     if(p) R.onSeleccion(p.a);
   };
-  // El arnés mide el costo real de las pantallas: apagando la malla se ve el delta
-  // EXACTO de draws. Dieciséis vidrios fusionados cuestan un draw, no dieciséis.
+  // El arnés mide el costo real de las pantallas: apagando la malla se ve el
+  // delta EXACTO de draws. Todos los vidrios fusionados cuestan un draw.
   window.__OF3D_PC__ = v => { if(R && R.pantallas) R.pantallas.malla.visible = !!v; };
-  // Y puede leer el atlas: es literalmente lo que hay en los vidrios, sin depender
-  // de que la cámara llegue a tiempo (en swiftshader el lerp necesita decenas de
-  // cuadros y esta caja llegó a renderizar a 0,06 fps con un video encima).
+  // Y puede leer el atlas: es literalmente lo que hay en los vidrios.
   window.__OF3D_ATLAS__ = () => (R && R.pantallas ? R.pantallas.atlas.canvas : null);
-  // La invariante que faltaba cuando se fueron los muros laterales: una matriz de
-  // instancia con NaN no se dibija y NO da ningún error en consola. Se auditan las
-  // dos cosas que pueden romper la escena en silencio.
   window.__OF3D_AUDIT__ = () => ({
     instanciasNaN: [...(R ? R.instanciasRotas() : [])],
     emisivosAltos: [...(R ? R.emisivosAltos() : [])],
@@ -733,304 +616,442 @@ async function montarReal(caja, datos, opciones = {}){
   return R;
 }
 
-/* ── la oficina de un medio ─────────────────────────────────────────────────── */
+/* ═══ ARMADO DE LA ESCENA ═════════════════════════════════════════════════ */
+const D2R = Math.PI / 180;
+
+/* Marca un mesh/grupo creado por `armar()` para disponerlo en `desarmarEscena`.
+   Nunca pasa por acá nada propio de la caché de GLB (`ASSETS`). */
+function descartar(o){
+  if(o && R) R.descartables.push(o);
+}
+
+/* Desarma un objeto descartable: sale de la escena y libera sus buffers. */
+function deshacer(o){
+  o.parent?.remove(o);
+  o.traverse?.(m => {                      // los grupos (núcleo) tienen hijos
+    m.geometry?.dispose?.();
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    for(const mt of mats) mt?.dispose?.();
+  });
+}
+
 function armar(){
-  const g = new THREE.Group();
-  const todos = (R.datos.agentes || []).filter(a => a && a.id);
-  // Un medio, una oficina. El piso de escritorios son SUS agentes de producción
-  // (redacción, video, placas, edición, medición); cobertura, estrategia y
-  // mantenimiento son la retaguardia de la red — una sola mesa de entradas para
-  // los diez — y van a la mesa de reuniones. Los que `atiende:false` (el medio no
-  // tiene cuenta conectada) no se sientan: en una redacción sin reparto no hay
-  // repartidor, y la Lista lo explica con su tarjeta.
-  //
-  // `ambito` lo manda oficina.py. Si el contenedor que sirve los `.py` todavía no
-  // tiene ese campo (static/ y los `.py` se despliegan aparte), todos van al piso:
-  // una oficina vacía por un desfasaje de deploy sería peor que la foto vieja.
-  const hayRoster = todos.some(a => a.ambito);
-  const propios = todos.filter(a => a.atiende !== false &&
-    (!hayRoster || a.ambito === 'medio'));
-  const red = hayRoster ? todos.filter(a => a.ambito === 'red') : [];
-  const { cols, rows } = grilla(propios.length);
-  const W = cols * CELDA_X, D = rows * CELDA_Z;
-  const sentados = propios.length + red.length;
-  R.g = { g, cols, rows, agentes: propios, red };
-  R.sala = { W, D };
-  R.ids = firmaRoster(todos);   // incluye cambios de ámbito y atención, no solo ids
+  const agentes = (R.datos.agentes || []).filter(a => a && a.id);
+  const n = agentes.length;
+  const radio = radioDe(n);
+  R.radio = radio;
+  // Cota del piso exterior: coincide con la base del dais, para que el disco
+  // apoye limpio sobre la plancha (sin cortes flotantes).
+  const FLOOR = -(ALTURA_DAI_S + 0.9);
 
-  const pool = new Pool(g);
-  const { difusor, marco } = poolsLuz(g);
-  // El piso es del EDIFICIO, no de la sala: la losa se extiende PASILLO más allá
-  // de las paredes y el muro perimetral cierra el encuadre.
-  const x0 = -PASILLO, z0 = -PASILLO, x1 = W + PASILLO, z1 = D + BANDA + PASILLO;
-  g.add(pisoPlano(x1 - x0 + ESPESOR * 2, z1 - z0 + ESPESOR * 2, (x0 + x1) / 2, (z0 + z1) / 2, 2.2));
-  edificio(pool, difusor, marco, x0, z0, x1, z1);
+  // ── el carrusel entero es UN grupo que gira ──────────────────────────────
+  const carrusel = new THREE.Group();
+  R.carrusel = carrusel;
 
-  // La pared del fondo va alta y los laterales a media altura: la cámara mira
-  // desde el frente y una caja cerrada taparía media redacción.
-  pool.caja(W + PARED * 2, ALTO_FONDO, PARED, W / 2, ALTO_FONDO / 2, 0, PAL.yeso);
-  pool.caja(W + PARED * 2, 0.09, PARED + 0.06, W / 2, ALTO_FONDO + 0.025, 0, PAL.cornisa);
-  pool.caja(W + PARED * 2, 0.14, PARED + 0.045, W / 2, 0.09, 0, PAL.piso);
-  // OJO al orden: `caja(w,h,d, x,y,z, color)`. Aquí se pasaba el color en la X,
-  // así que `position.set('#e9e1cf', …)` daba NaN en la matriz de instancia (la
-  // GPU descartaba la instancia) y `new THREE.Color(7)` negro: los dos muros
-  // laterales de la sala NUNCA se dibujaron y la escena quedaba abierta sobre la
-  // niebla — media causa del "fondo blanco flotante".
-  pool.caja(PARED, ALTO_LATERAL, D + BANDA, 0, ALTO_LATERAL / 2, (D + BANDA) / 2, PAL.yeso);
-  pool.caja(PARED, ALTO_LATERAL, D + BANDA, W, ALTO_LATERAL / 2, (D + BANDA) / 2, PAL.yeso);
-  // Zócalo de la sala, por dentro.
-  pool.caja(W, 0.14, 0.06, W / 2, 0.07, PARED / 2 + 0.03, PAL.zocalo);
-  pool.caja(0.06, 0.14, D + BANDA - 0.1, PARED / 2 + 0.03, 0.07, (D + BANDA) / 2, PAL.zocalo);
-  pool.caja(0.06, 0.14, D + BANDA - 0.1, W - PARED / 2 - 0.03, 0.07, (D + BANDA) / 2, PAL.zocalo);
-  // Banda de pasillo al frente: lo que ve la cámara por debajo de la sala.
-  pool.caja(W + PARED * 2, 0.02, 1.1, W / 2, 0.006, D + BANDA + 0.6, PAL.pasillo);
+  // Splash del piso exterior: un plano circular enorme y bajo, reflectante y
+  // oscuro. Con la niebla al tono del fondo, el horizonte funde sin bordes.
+  const pisoGeo = new THREE.CircleGeometry(radio * 5.2, 48);
+  pisoGeo.rotateX(-Math.PI / 2);
+  const piso = new THREE.Mesh(pisoGeo, new THREE.MeshStandardMaterial({
+    color: CB.piso, roughness: 0.6, metalness: 0.08,
+  }));
+  piso.position.y = FLOOR;
+  piso.receiveShadow = true;
+  R.scene.add(piso);
+  descartar(piso);
 
-  const inst = new Instanciador(g);
-  // Banda de atrás: mesa de reuniones, banco de impresión y pizarra. Es lo que
-  // hace que se lea como una redacción y no como un depósito de escritorios.
-  const zBanda = D + BANDA / 2;
-  const mesaX = W / 2;
-  // Los dos destinos del movimiento, en el mismo lugar donde se instanció el
-  // mueble: el banco de impresión (se para al costado, no encima) y el extremo de
-  // la mesa de reuniones.
-  R.muebles = { mesaX, zBanda, impresora: [1.6 + 0.8, zBanda + 1.4],
-                mesa: [mesaX - 1.5, zBanda - 1.25] };
-  // Las huellas salen de los GLB usados en esta sala, no de tamaños supuestos.
-  R.navegacion = { W, D: D + BANDA, obstaculos: [] };
-  function obstaculo(modelo, matriz, dueño = null){
-    const caja = new THREE.Box3().setFromObject(modelo).applyMatrix4(matriz);
-    R.navegacion.obstaculos.push({ minX: caja.min.x, maxX: caja.max.x,
-                                   minZ: caja.min.z, maxZ: caja.max.z, dueño });
+  // ── el dais: el disco donde viven las estaciones ─────────────────────────
+  const daiGeo = new THREE.CylinderGeometry(radio + 2.6, radio + 2.9, ALTURA_DAI_S + 0.9, 64);
+  const dais = new THREE.Mesh(daiGeo, new THREE.MeshStandardMaterial({
+    color: CB.dais, roughness: 0.42, metalness: 0.55,
+  }));
+  // El disco baja entero hasta que su cara superior quede en y = 0 y su base
+  // apoye en el piso exterior: las estaciones viven sobre esa superficie.
+  dais.position.y = -(ALTURA_DAI_S + 0.9) / 2;
+  dais.receiveShadow = true; dais.castShadow = false;
+  R.scene.add(dais);
+  descartar(dais);
+
+  // Superficie superior del dais: la textura técnica (un círculo con la
+  // textura ya polar) — mesh separado para que el UV llene y los reflectores
+  // no se peleen con los anillos de marca.
+  const caraGeo = new THREE.CircleGeometry(radio + 2.55, 64);
+  caraGeo.rotateX(-Math.PI / 2);
+  const cara = new THREE.Mesh(caraGeo, new THREE.MeshStandardMaterial({
+    map: texturaPlato(), roughness: 0.34, metalness: 0.18,
+  }));
+  cara.receiveShadow = true;
+  R.scene.add(cara);
+  descartar(cara);
+
+  // Anillo guía: la circunferencia por donde pasan las estaciones.
+  const guiaGeo = new THREE.TorusGeometry(radio, 0.012, 6, 96);
+  guiaGeo.rotateX(-Math.PI / 2);
+  const guia = new THREE.Mesh(guiaGeo, new THREE.MeshBasicMaterial({
+    color: CB.acento, transparent: true, opacity: 0.22, toneMapped: false,
+  }));
+  guia.position.y = 0.012;
+  R.scene.add(guia);
+  descartar(guia);
+  // Dos concéntricos exteriores, cada vez más tenues: profundidad.
+  for(let i = 1; i <= 2; i++){
+    const rg = new THREE.TorusGeometry(radio + 1.7 + i * 0.55, 0.008, 6, 96);
+    rg.rotateX(-Math.PI / 2);
+    const rm = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({
+      color: CB.acento, transparent: true, opacity: 0.1 / i, toneMapped: false,
+    }));
+    rm.position.y = 0.01;
+    R.scene.add(rm);
+    descartar(rm);
   }
-  const mesaMat = new THREE.Matrix4().makeScale(1.4, 1.4, 1.4).multiply(new THREE.Matrix4().makeTranslation(mesaX, 0, zBanda));
-  obstaculo(R.assets.mesa.scene, mesaMat);
-  obstaculo(R.assets.impresion.scene, new THREE.Matrix4().makeTranslation(1.6, 0, zBanda + 1.4));
-  obstaculo(R.assets.pizarra.scene, new THREE.Matrix4().makeTranslation(W - 1.6, 0, zBanda)
-    .multiply(new THREE.Matrix4().makeRotationY(-Math.PI / 2)));
-  inst.agregar(R.assets.mesa.scene, mesaMat);
-  inst.agregar(R.assets.impresion.scene, new THREE.Matrix4().makeTranslation(1.6, 0, zBanda + 1.4));
-  // Premium rug under conference table
-  pool.caja(W * 0.9, 0.04, BANDA * 0.9, W / 2, 0.02, zBanda, '#3a2f25');
-  inst.agregar(R.assets.pizarra.scene, new THREE.Matrix4().makeTranslation(W - 1.6, 0, zBanda)
-    .multiply(new THREE.Matrix4().makeRotationY(-Math.PI / 2)));
 
+  // ── el núcleo: colimador de la fábrica ───────────────────────────────────
+  const nucleo = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.78, 0.5, 28),
+    new THREE.MeshStandardMaterial({ color: CB.metal, roughness: 0.3, metalness: 0.85 }));
+  base.position.y = 0.25;
+  const tubo = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 2.5, 24, 1, true),
+    new THREE.MeshStandardMaterial({
+      color: '#0a141e', roughness: 0.12, metalness: 0.4, transparent: true,
+      opacity: 0.24, emissive: CB.acento, emissiveIntensity: 0.16,
+      side: THREE.DoubleSide,
+    }));
+  tubo.position.y = 1.7;
+  const esfera = new THREE.Mesh(new THREE.IcosahedronGeometry(0.36, 2),
+    new THREE.MeshStandardMaterial({
+      color: '#062430', emissive: CB.acento, emissiveIntensity: 1.35,
+      roughness: 0.15, metalness: 0.1,
+    }));
+  esfera.position.y = 1.7;
+  // Dos anillos orbitando la esfera, cada uno en un eje y al contrario.
+  const anilloA = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.02, 6, 64),
+    new THREE.MeshBasicMaterial({ color: CB.acento, transparent: true, opacity: 0.75, toneMapped: false }));
+  anilloA.rotation.x = Math.PI / 2.6;
+  anilloA.position.y = 1.7;
+  const anilloB = new THREE.Mesh(new THREE.TorusGeometry(1.12, 0.014, 6, 64),
+    new THREE.MeshBasicMaterial({ color: CB.acento2, transparent: true, opacity: 0.55, toneMapped: false }));
+  anilloB.rotation.set(Math.PI / 1.9, 0.3, 0);
+  anilloB.position.y = 1.7;
+  const luzNucleo = new THREE.PointLight(LUZ.nucleo, LUZ.intensidadNucleo, 30, 1.6);
+  luzNucleo.position.y = 2.0;
+  nucleo.add(base, tubo, esfera, anilloA, anilloB, luzNucleo);
+  R.scene.add(nucleo);
+  R.nucleo = { grupo: nucleo, esfera, anilloA, anilloB, tubo };
+  descartar(nucleo);
+
+  // ── faros del horizonte: la ciudad de operaciones móvil al fondo ────────
+  // Postes finos y tenues, fuera del anillo, de alturas variadas: dan
+  // profundidad SIN ser paredes y la niebla los funde en banda de color.
+  // Cuidado con la exageración: emisivo alto × piso reflectante vuelve el
+  // plano un espejo azul; acá van casi al límite de lo visible.
+  const FAROS = 12;
+  const faroGeo = new THREE.BoxGeometry(0.09, 1, 0.09);
+  R.faros = new THREE.InstancedMesh(faroGeo,
+    new THREE.MeshStandardMaterial({
+      color: '#101b28', emissive: CB.acento2, emissiveIntensity: 0.16, roughness: 0.6,
+    }), FAROS);
+  {
+    const s = new THREE.Object3D();
+    for(let i = 0; i < FAROS; i++){
+      const a = i / FAROS * Math.PI * 2 + 0.4;
+      const rr = radio * 2.6 + (i % 4) * radio * 0.4;
+      const h = 1.1 + (i % 5) * 0.55;
+      s.position.set(Math.sin(a) * rr, FLOOR + h / 2 + (i % 3) * 0.5, Math.cos(a) * rr);
+      s.scale.set(1, h, 1);
+      s.updateMatrix();
+      R.faros.setMatrixAt(i, s.matrix);
+    }
+    R.faros.instanceMatrix.needsUpdate = true;
+  }
+  R.scene.add(R.faros);
+  descartar(R.faros);
+
+  // ── polvo luminoso: motas flotando lentas — vive de la escena ────────────
+  if(R.mov){
+    const MAX_DUST = 170;
+    const pos = new Float32Array(MAX_DUST * 3);
+    for(let i = 0; i < MAX_DUST; i++){
+      const a = Math.random() * Math.PI * 2;
+      const rr = radio * (0.25 + Math.random() * 1.6);
+      pos[i * 3] = Math.sin(a) * rr;
+      pos[i * 3 + 1] = 0.2 + Math.random() * 5.4;
+      pos[i * 3 + 2] = Math.cos(a) * rr;
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    R.polvo = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+      color: '#7fdcff', size: 0.055, transparent: true, opacity: 0.35,
+      sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    R.scene.add(R.polvo);
+    descartar(R.polvo);
+  }
+
+  // ── iluminación en escena ────────────────────────────────────────────────
+  // Las luces nacen en montarReal y viajan por R: acá se cuelgan a la escena.
+  R.scene.add(R.clave, R.fosa,
+    new THREE.HemisphereLight(LUZ.cielo, LUZ.suelo, LUZ.hemisferio),
+    R.foco, R.focoObjetivo);
+  R.scene.add(R.foco.target);
+
+  // ── instancias por estación (matrices en el ESPACIO DEL CARRUSEL) ────────
+  // Las plataformas, los trims, los anillos y las sombras son InstancedMesh
+  // hijos del carrusel: girar el grupo gira TODO con un solo tercio de costo.
+  const inst = new Instanciador(carrusel);
+
+  // Pedestal circular por estación.
+  const pedGeo = new THREE.CylinderGeometry(PLATA_R, PLATA_R + 0.09, PLATA_H, 28);
+  R.plataformas = new THREE.InstancedMesh(pedGeo,
+    new THREE.MeshStandardMaterial({ color: CB.pedestal, roughness: 0.5, metalness: 0.5 }),
+    Math.max(n, 1));
+  R.plataformas.count = n;
+  R.plataformas.castShadow = false; R.plataformas.receiveShadow = true;
+  carrusel.add(R.plataformas);
+
+  // Trim de color alrededor del pedestal: es el semáforo del puesto.
+  const trimGeo = new THREE.TorusGeometry(PLATA_R + 0.03, 0.025, 8, 40);
+  trimGeo.rotateX(-Math.PI / 2);
+  R.trims = new THREE.InstancedMesh(trimGeo, new THREE.MeshBasicMaterial({
+    toneMapped: false,
+  }), Math.max(n, 1));
+  R.trims.count = n;
+  // Los trims SIEMPRE brillan un poco por cuenta propia (basic material).
+  R.trims.castShadow = false; R.trims.receiveShadow = false;
+  carrusel.add(R.trims);
+
+  // Anillo de estado de cada personaje (el mismo torus de siempre).
   const geoAnillo = new THREE.TorusGeometry(0.44, 0.035, 8, 28);
   geoAnillo.rotateX(-Math.PI / 2);
   R.anillos = new THREE.InstancedMesh(geoAnillo,
-    new THREE.MeshStandardMaterial({ roughness: 0.55 }), Math.max(sentados, 1));
-  R.anillos.count = sentados;
+    new THREE.MeshStandardMaterial({ roughness: 0.55 }), Math.max(n, 1));
+  R.anillos.count = n;
   R.anillos.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  g.add(R.anillos);
+  carrusel.add(R.anillos);
 
+  // Sombra falsa del personaje (con la sombra real no se mezcla: es la base).
   const geoSombra = new THREE.CircleGeometry(0.48, 20);
   geoSombra.rotateX(-Math.PI / 2);
   R.sombras = new THREE.InstancedMesh(geoSombra, new THREE.MeshBasicMaterial({
     map: texturaSombra(), transparent: true, depthWrite: false,
-  }), Math.max(sentados, 1));
-  R.sombras.count = sentados;
-  g.add(R.sombras);
+  }), Math.max(n, 1));
+  R.sombras.count = n;
+  carrusel.add(R.sombras);
 
-  // Alfombra bajo cada puesto: sin ella el escritorio pisa el parquet y la sala
-  // parece un showroom; con ella cada agente tiene su tapete de trabajo.
-  const geoAlfombra = new THREE.PlaneGeometry(1.9, 1.5);
-  geoAlfombra.rotateX(-Math.PI / 2);
-  R.alfombras = new THREE.InstancedMesh(geoAlfombra,
-    new THREE.MeshStandardMaterial({ color: PAL.alfombra, roughness: 1 }),
-    Math.max(propios.length, 1));
-  R.alfombras.count = propios.length;
-  R.alfombras.receiveShadow = true;
-  g.add(R.alfombras);
+  R.scene.add(carrusel);
 
   const tmp = new THREE.Object3D();
-  let puesto = 0;
+  const SRATCH_MAT = new THREE.Matrix4();
+  const jl = n > 0 ? Math.PI * 2 / n : 1;
 
-  // Sentar a un agente: silla + cuerpo + animación + anillo + sombra + rótulo.
-  // Sirve igual para el escritorio del medio que para la mesa de la red.
-  function sentar(a, x, z, giro, conEscritorio){
-    const i = puesto++;
-    const modelo = R.assets.cuerpos[modeloDe(a.id)];
-    const cuerpo = clonarEsqueleto(modelo.scene);
-    cuerpo.position.set(x, 0, z);
-    cuerpo.rotation.y = giro;
-    cuerpo.traverse(o => { if(o.isMesh){ o.castShadow = true; o.receiveShadow = false; } });
-    g.add(cuerpo);
+  // ── sentar a los agentes ──────────────────────────────────────────────────
+  agentes.forEach((a, k) => {
+    const fi = k * jl;                       // ángulo de la estación en el anillo
+    const x = Math.sin(fi) * radio, z = Math.cos(fi) * radio;
+    // FASE (π) aparte: define qué lado de la estación mira a la cámara.
+    grupoEstacion(a, k, fi, x, z, tmp, SRATCH_MAT, inst);
+  });
 
-    // Los clips viven en `gltf.animations`, NO en la scene: el clone del
-    // esqueleto no se los lleva y buscarlos en el cuerpo devuelve null.
-    const clips = modelo.animations;
-    const mixer = new THREE.AnimationMixer(cuerpo);
-    const acc = nombre => {
-      const clip = THREE.AnimationClip.findByName(clips, nombre);
-      return clip ? mixer.clipAction(clip) : null;
-    };
-    // Las TRES acciones se guardan: `walk` estaba bajado y nunca usado, y sin él
-    // no hay traslado posible. Se elige la pose por transición real (`irA`), no
-    // por un reloj propio.
-    const p = { a, i, x, z, giro, cuerpo, etiqueta: null, rotulo: null,
-                color: colorDe(a), escritorio: !!conEscritorio,
-                sitX: x, sitZ: z, mix: { mixer, sit: acc('sit'), idle: acc('idle'),
-                                         walk: acc('walk'), cur: null },
-                ruta: null, hasta: 0, aviso: null, celda: -1, enEspera: false,
-                pedido: null, enReunion: false, alVuelta: false, salida: 0 };
-    const arrancar = p.mix.sit || p.mix.idle;
-    if(arrancar){
-      arrancar.play();
-      p.mix.cur = arrancar;
-      // La pose sentada solo se anima mientras el job está realmente corriendo.
-      // Los demás conservan una pose fija: estar registrado no significa trabajar.
-      arrancar.time = 0.2;
-      arrancar.paused = !R.mov || !a.en_curso;
-      mixer.update(0);
-      R.mixers.push({ mixer, acc: arrancar });
-    }
-
-    tmp.position.set(x, 0.02, z); tmp.scale.setScalar(1); tmp.rotation.set(0, 0, 0);
-    tmp.updateMatrix();
-    R.anillos.setMatrixAt(i, tmp.matrix);
-    tmp.position.set(x, 0.014, z); tmp.scale.set(1.1, 1, 1.1); tmp.updateMatrix();
-    R.sombras.setMatrixAt(i, tmp.matrix);
-
-    const box = new THREE.Box3().setFromObject(cuerpo);
-    box.expandByScalar(0.2);
-    p.box = box; p.caja0 = box.clone();
-    R.puestos.push(p);
-    return p;
+  // Las matrices recién escritas ya se usaron con needsUpdate implícito por
+  // ser la primera subida; para rebuilds hay que marcarlas otra vez.
+  for(const im of [R.plataformas, R.trims, R.anillos, R.sombras]){
+    if(im) im.instanceMatrix.needsUpdate = true;
   }
 
-  propios.forEach((a, k) => {
-    const col = k % cols, fila = Math.floor(k / cols);
-    const x = (col + 0.5) * CELDA_X, z = (fila + 0.5) * CELDA_Z;
-    // El divisor del puesto mira al −Z: silla y personaje van al costado +Z del
-    // escritorio y girados π, si no el agente le da la espalda al monitor.
-    const cz = z + 0.62;
-    const escritorio = new THREE.Matrix4().makeTranslation(x, 0, z);
-    const silla = new THREE.Matrix4().makeTranslation(x, 0, cz)
-      .multiply(new THREE.Matrix4().makeRotationY(Math.PI));
-    inst.agregar(R.assets.escritorio.scene, escritorio);
-    inst.agregar(R.assets.silla.scene, silla);
-    obstaculo(R.assets.escritorio.scene, escritorio);
-    obstaculo(R.assets.silla.scene, silla, a.id);
-    tmp.position.set(x, 0.008, z + 0.3); tmp.scale.setScalar(1); tmp.rotation.set(0, 0, 0);
-    tmp.updateMatrix();
-    R.alfombras.setMatrixAt(k, tmp.matrix);
-    const p = sentar(a, x, cz, Math.PI, true);
-    // El escritorio también abre la ficha; la caja del cuerpo sigue al personaje.
-    p.boxEscritorio = new THREE.Box3(
-      new THREE.Vector3(x - 0.85, 0, z - 0.75),
-      new THREE.Vector3(x + 0.85, 1.45, z + 0.48));
-  });
+  // El roster quedó fijado: `actualizar()` compara contra esta firma para no
+  // reconstruir la escena si llegan los mismos agentes (solo cambian estados).
+  R.ids = firmaRoster(agentes);
 
-  // La mesa de reuniones mide 3,9 × 1,86 m: se reparten los de la red de a dos por
-  // fila (un lado mira a −Z, el otro a +Z) y el paso se achica solo si hacen falta.
-  const porLado = Math.ceil(red.length / 2) || 1;
-  const paso = Math.min(0.95, 3.3 / porLado);
-  red.forEach((a, k) => {
-    const lado = k % 2 ? 1 : -1;
-    const n = Math.floor(k / 2);
-    const x = mesaX - (porLado - 1) * paso / 2 + n * paso;
-    const z = zBanda + lado * 1.35;
-    const silla = new THREE.Matrix4().makeTranslation(x, 0, z)
-      .multiply(new THREE.Matrix4().makeRotationY(lado > 0 ? Math.PI : 0));
-    inst.agregar(R.assets.silla.scene, silla);
-    obstaculo(R.assets.silla.scene, silla, a.id);
-    sentar(a, x, z, lado > 0 ? Math.PI : 0, false);
-  });
+  // Heurística del frente: qué puesto tiene un pedido humano a la vista.
+  for(const p of R.puestos) p.aviso = avisoDe(p, R.datos);
 
+  // Construcción de instancias + pantallas + rótulos.
   inst.construir();
-  pool.construir();
-  difusor.construir();
-  marco.construir();
-  // Se siembra `p.aviso` y `R.previos` ANTES de pintar las pantallas: si no, el
-  // montaje arranca con el cartel de bloqueo afuera del vidrio y hasta el primer
-  // refresco no aparece. En el primer pasada nadie camina (`transiciones` salta
-  // los puestos que no se vieron nunca), así que esto no mueve nada por sí solo.
   transiciones();
   armarPantallas();
   armarRotulos();
   armarGlobos();
-  pintarAnillos();
-  R.scene.add(g);
+  pintarAcentos();
 
-  // El cartel de la pared: qué oficina es esta. Sale del payload (oficina.py pone
-  // `medio_nombre`), no de una etiqueta que el frente se invente.
-  const d = R.datos, r = d.resumen || {};
-  const titulo = d.medio ? (d.medio_nombre || d.medio) : 'La red completa';
-  // Si el contenedor desplegado todavía no manda `del_medio`/`de_la_red`, el cartel
-  // se queda solo con el nombre: no puede prometer números que el backend no dio.
-  const sub = r.del_medio === undefined ? ''
-    : d.medio
-        ? (d.conectado === false
-            ? 'sin cuenta conectada: este medio aún no tiene piso de producción'
-            : `${r.del_medio} del medio · ${r.de_la_red || 0} de la red`)
-        : `${r.del_medio} de producción + ${r.de_la_red || 0} de la red`;
+  // El cartel vivo del núcleo: qué fábrica es esta y cómo está su gente.
+  // Sale del payload (factoryd respin /api/oficina), no se inventa acá.
+  const d = R.datos, r = (d.resumen || {});
+  const titulo = d.medio ? (d.medio_nombre || d.medio) : 'Central de operaciones';
+  const cuenta = conteoEstados(agentes);
+  const sub = r.del_medio === undefined
+    ? `${cuenta.activos} activos · ${cuenta.curso} trabajando`
+    : `${r.del_medio} del medio · ${r.de_la_red || 0} de la red`;
   R.cartel = new CSS2DObject(cartelDe(titulo, sub));
-  R.cartel.position.set(W / 2, ALTO_FONDO - 0.55, 0.3);
-  g.add(R.cartel);
+  R.cartel.position.set(0, 3.35, 0);
+  R.scene.add(R.cartel);
 
-  sombrear(g, W, D + BANDA);
+  // La sombra proyecta el anillo completo.
+  sombrear(radio);
 }
 
-// La frustum de sombra tiene que cubrir toda la sala traducida, muebles altos
-// incluidos; con el default de three los puestos del fondo no se sombrean.
-function sombrear(g, W, D){
-  const e = Math.hypot(W, D) / 2 + 4;
-  Object.assign(R.sol.shadow.camera, { left: -e, right: e, top: e, bottom: -e, near: 0.5, far: e * 4 });
-  R.sol.shadow.camera.updateProjectionMatrix();
-  R.sol.target.position.set(W / 2, 0, D / 2);
-  R.scene.add(R.sol.target);
+/* Pedestales de la estación: casi el alto del puesto. */
+const PLATA_R = 1.42, PLATA_H = 0.14;
+
+/* Fase del carrusel: la estación gira fi + FASE. Con FASE = π el frente de la
+   estación (donde está la cara del personaje y la pantalla legible, que miran
+   al −Z local) apunta hacia afuera del anillo, que es donde está la cámara. */
+const FASE = Math.PI;
+
+/* Pone UNA estación: personajes, muebles y anclas en su grupo propio. */
+function grupoEstacion(a, k, fi, x, z, tmp, SCRATCH_MAT, inst){
+  const carrusel = R.carrusel;
+  const unidad = new THREE.Group();
+  unidad.position.set(x, 0, z);
+  unidad.rotation.y = fi + FASE;          // la cara del puesto mira hacia afuera
+  carrusel.add(unidad);
+  // La matriz se congela acá: `unidad.matrix` sirve de base para las matrices
+  // de los muebles y de los vidrios de pantalla, y sin `updateMatrix` three
+  // la deja sin escribir (matrixAutoUpdate es perezoso).
+  unidad.updateMatrix();
+
+  // Pedestal y trim no necesitan rotación (radial simetría): van por instancias
+  // en el espacio del carrusel — girar el grupo los lleva igual.
+  tmp.position.set(x, PLATA_H / 2, z); tmp.scale.set(1, 1, 1); tmp.rotation.set(0, 0, 0);
+  tmp.updateMatrix();
+  R.plataformas.setMatrixAt(k, tmp.matrix);
+  tmp.position.set(x, PLATA_H - 0.012, z); tmp.updateMatrix();
+  R.trims.setMatrixAt(k, tmp.matrix);
+
+  // Escritorio en el centro de la estación. El monitor (que se agrega aparte,
+  // como vidrio del atlas) queda mirando al −Z local de la estación: ese es el
+  // lado que, con FASE = π, apunta hacia la cámara.
+  inst.agregar(R.assets.escritorio.scene, unidad.matrix.clone());
+
+  // Silla + personaje en el +Z local de la estación (el lado del núcleo):
+  // sentado en su silla, mirando a su monitor y a la vez de frente al
+  // espectador cuando la estación viene al frente.
+  const sillaMat = unidad.matrix.clone().multiply(new THREE.Matrix4()
+    .makeTranslation(0, 0, 0.62).multiply(new THREE.Matrix4().makeRotationY(Math.PI)));
+  inst.agregar(R.assets.silla.scene, sillaMat);
+
+  // Personaje: clon con esqueleto propio para que cada agente tenga su
+  // animación independiente. Vive en el GRUPO de la estación: girar el
+  // carrusel lo mueve entero, rótulo incluido.
+  const modelo = R.assets.cuerpos[modeloDe(a.id)];
+  const cuerpo = clonarEsqueleto(modelo.scene);
+  cuerpo.position.set(0, 0, 0.62);
+  cuerpo.rotation.y = Math.PI;      // el modelo mira a +Z local; él mira al −Z
+  cuerpo.traverse(o => { if(o.isMesh){ o.castShadow = true; o.receiveShadow = false; } });
+  unidad.add(cuerpo);
+
+  const clips = modelo.animations;
+  const mixer = new THREE.AnimationMixer(cuerpo);
+  const acc = nombre => {
+    const clip = THREE.AnimationClip.findByName(clips, nombre);
+    return clip ? mixer.clipAction(clip) : null;
+  };
+  const p = { a, i: k, fi, x, z, giro: Math.PI, cuerpo, grupo: unidad,
+              etiqueta: null, rotulo: null,
+              color: colorDe(a), escritorio: true,
+              mix: { mixer, sit: acc('sit'), idle: acc('idle'), cur: null },
+              aviso: null, celda: -1 };
+  const arrancar = p.mix.sit || p.mix.idle;
+  if(arrancar){
+    arrancar.play();
+    p.mix.cur = arrancar;
+    // La pose sentada solo se anima mientras el job está realmente corriendo.
+    arrancar.time = 0.2;
+    arrancar.paused = !R.mov || !a.en_curso;
+    mixer.update(0);
+    R.mixers.push({ mixer, acc: arrancar });
+  }
+
+  // Anillo + sombra falsa, también instanciados (espacio del carrusel).
+  tmp.position.set(x, 0.02, z); tmp.scale.setScalar(1); tmp.rotation.set(0, 0, 0);
+  tmp.updateMatrix();
+  R.anillos.setMatrixAt(k, tmp.matrix);
+  tmp.position.set(x, PLATA_H + 0.004, z); tmp.scale.set(1.1, 1, 1.1); tmp.updateMatrix();
+  R.sombras.setMatrixAt(k, tmp.matrix);
+
+  // La caja de click: se mide en espacio LOCAL de la estación (mismo origen),
+  // y por frame se pasa al mundo con la matriz mundial de la estación.
+  cuerpo.updateMatrixWorld(true);
+  const caja = new THREE.Box3().setFromObject(cuerpo);
+  caja.expandByScalar(0.2);
+  p.desc0 = caja;
+  // La caja de la mesa entera (desk + pantalla) también descubre el click.
+  p.descEscritorio = new THREE.Box3(
+    new THREE.Vector3(-0.95, 0, -0.85),
+    new THREE.Vector3(0.95, 1.55, 0.62));
+  p.box = caja.clone();
+  p.boxEscritorio = p.descEscritorio.clone();
+  R.puestos.push(p);
+  return p;
+}
+
+// La frustum de sombra cubre el anillo entero; con el default de three los
+// puestos del fondo quedan sin sombra.
+function sombrear(radio){
+  const e = radio + 4;
+  Object.assign(R.clave.shadow.camera, { left: -e, right: e, top: e, bottom: -e, near: 0.5, far: e * 5 });
+  R.clave.shadow.camera.updateProjectionMatrix();
+  R.clave.target.position.set(0, 0, 0);
+  R.scene.add(R.clave.target);
   R.renderer.shadowMap.needsUpdate = true;
 }
 
-// La PC de cada agente. Solo tienen pantalla los que tienen escritorio: los de la
-// red se sientan en la mesa de reuniones, y ponerles un monitor que no existe es
-// justo lo que la regla del módulo no permite. Los quads se fusionan en UN mesh
-// sobre UN atlas: 26 vidrios cuestan un draw, no veintiséis.
+// La PC de cada agente: UN mesh con los quads de TODAS las estaciones, orneado
+// en el espacio del CARRUSEL: al girar el grupo, los vidrios giran con él.
+// 26 vidrios cuestan un draw, no veintiséis.
 function armarPantallas(){
   const conPc = R.puestos.filter(p => p.escritorio);
   if(!conPc.length) return;
   const atlas = asegurarAtlas(conPc.length);
+  // Cada vidrio es un quad horneado en el espacio LOCAL de su estación y
+  // llevado a espacio del CARRUSEL con la matriz de esa estación, ANTES del
+  // merge: así el mesh fusionado queda fijo en el carrusel y gira con él.
   const partes = [];
   conPc.forEach((p, k) => {
     p.celda = k;
-    partes.push(quadDePantalla(k, atlas, p));
+    const g = new THREE.PlaneGeometry(PANTALLA.w, PANTALLA.h);
+    hornearUVs(g, k, atlas);
+    const local = new THREE.Matrix4()
+      .makeTranslation(PANTALLA.x, PANTALLA.y, PANTALLA.z);
+    if(PANTALLA.cara === 'camara') local.multiply(new THREE.Matrix4().makeRotationY(Math.PI));
+    p.grupo.updateMatrix();
+    g.applyMatrix4(local);
+    g.applyMatrix4(p.grupo.matrix);
+    partes.push(g);
     pintarPantalla(atlas, p, true);
   });
-  const geo = mergeGeometries(partes, false);
+  const mallaGeo = mergeGeometries(partes, false);
   partes.forEach(gg => gg.dispose());
-  const malla = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-    map: atlas.tex, toneMapped: false,      // una pantalla brilla sola: sin luz, sin sombra
+  const malla = new THREE.Mesh(mallaGeo, new THREE.MeshBasicMaterial({
+    map: atlas.tex, toneMapped: false,      // una pantalla brilla sola
   }));
   malla.castShadow = false; malla.receiveShadow = false;
-  R.g.g.add(malla);
+  R.carrusel.add(malla);
   R.pantallas = { malla, atlas, conPc };
   if(PANTALLA.caja){
-    // Verificación con el arnés: la caja real del vidrio del GLB en cada puesto,
-    // para ajustar `w/h/x/y/z` sobre el mueble y no sobre una corazonada.
     const ga = new THREE.BoxGeometry(PANTALLA.w * 1.1, PANTALLA.h * 1.06, 0.29);
     const aristas = new THREE.EdgesGeometry(ga);
     const ma = new THREE.LineBasicMaterial({ color: 0xff00ff });
     R.cajas = conPc.map(p => {
       const c = new THREE.LineSegments(aristas, ma);
-      c.position.set(p.x + PANTALLA.x, PANTALLA.y, p.z + PANTALLA.z + 0.15);
-      R.g.g.add(c);
+      c.position.set(PANTALLA.x, PANTALLA.y, PANTALLA.z);
+      p.grupo.add(c);
       return c;
     });
     R.cajasGeo = [ga, aristas];              // compartidas: se disponen una sola vez
   }
 }
 
-// Rótulo con NOMBRE y ROL del agente: el operator pidió que se lean personas con
-// oficio, no tarjetas flotando ni tiempos. Dos líneas porque el nombre es lo que
-// se busca con la vista; el rol se cae solo en el celular (oficina.css).
+// Rótulo con NOMBRE y ROL del agente: personas con oficio, no tarjetas. Va
+// pegado al GRUPO de la estación, así que girar el carrusel lo lleva.
 function armarRotulos(){
   for(const p of R.puestos){
     if(!p.rotulo){
       const obj = new CSS2DObject(rotuloDe(p.a));
-      obj.position.set(p.x, p.box.max.y + 0.1, p.z);
-      R.g.g.add(obj);
+      const arriba = (p.desc0 || p.box).max.y;
+      obj.position.set(0, arriba + 0.28, 0.62);
+      p.grupo.add(obj);
       p.rotulo = obj;
     }else{
-      // Refresco: mismo puesto, datos nuevos. Se reescribe el texto, no el nodo.
+      // Refresco: misma estación, datos nuevos. Se reescribe el texto.
       llenarRotulo(p.rotulo.element, p.a);
     }
   }
@@ -1051,12 +1072,12 @@ function llenarRotulo(div, a){
   div.dataset.estado = colorDe(a);
   div.title = a.en_curso ? 'Trabajando ahora' :
     a.estado === 'reposo' ? 'En reposo' :
-    a.estado !== 'activo' ? 'Sin turno' :
+    !activoDe(a) ? 'Sin turno' :
     colorDe(a) === 'error' ? 'Última corrida con error' : 'En turno, sin corrida en curso';
 }
 
-// El cartel de la entrada: DOM puro con textContent, porque el nombre del medio
-// viene de la BD y no hay que darle ninguna oportunidad de ser marcado.
+// El cartel del núcleo: DOM puro con textContent, porque el nombre de la
+// fábrica viene del backend y no hay que darle ninguna ventaja de marcado.
 function cartelDe(titulo, sub){
   const div = document.createElement('div');
   div.className = 'of-cartel';
@@ -1068,64 +1089,410 @@ function cartelDe(titulo, sub){
   return div;
 }
 
-// Los globos se rehacen enteros en cada rebuild: son pocos (solo los turnos que
-// terminaron mal) y así no hay estados fantasma. Van más arriba que el rótulo.
+// Los globos se rehacen enteros en cada rebuild: pocos, sin estados fantasma.
 function armarGlobos(){
   for(const p of R.puestos){
     if(!p.etiqueta) continue;
-    R.g.g.remove(p.etiqueta);
+    p.grupo.remove(p.etiqueta);
     p.etiqueta.element?.remove();
     p.etiqueta = null;
   }
   for(const p of R.puestos){
-    // El grito del puesto es el turno perdido; si no lo hay, los de la mesa de la
-    // red (que no tienen PC donde leerse) muestran el bloqueo de la red encima de
-    // la cabeza. En el escritorio eso ya vive en el vidrio, y repetiría el texto.
     const mal = globoDe(p.a);
-    const globo = mal || (p.aviso && !p.escritorio
-      ? { txt: '⏳ ' + p.aviso, mal: false, clase: 'reposo' } : null) ||
-      (p.a.en_curso && p.a.faena && !p.escritorio
-        ? { txt: '● ' + String(p.a.faena).slice(0, 80), mal: false, clase: 'curso' } : null);
+    const globo = mal || (p.a.en_curso && p.a.faena
+      ? { txt: '● ' + String(p.a.faena).slice(0, 80), mal: false, clase: 'curso' } : null);
     if(!globo) continue;
     const div = document.createElement('div');
     div.className = 'of-globo ' + (globo.clase || (globo.mal ? 'mal' : 'ok'));
     div.textContent = globo.txt;
     const obj = new CSS2DObject(div);
-    obj.position.set(p.x, p.box.max.y + 0.72, p.z);
-    R.g.g.add(obj);
+    obj.position.set(0, (p.desc0 || p.box).max.y + 0.78, 0.62);
+    p.grupo.add(obj);
     p.etiqueta = obj;
   }
 }
 
-function pintarAnillos(){
+/* Los colores que dependen del ESTADO: anillos + trims de pedestal. Un solo
+   repintado por Refresh, ambos instanciados. */
+function pintarAcentos(){
   const c = new THREE.Color();
   for(const p of R.puestos){
     c.setHex(COLOR[p.color] ?? COLOR.sinturno);
-    if(R.sel && p.a.id === R.sel) c.multiplyScalar(1.6);   // el seleccionado se ve
-    R.anillos.setColorAt(p.i, c);
+    const sel = R.sel && p.a.id === R.sel;
+    if(sel) c.multiplyScalar(1.55);          // el seleccionado se ve
+    if(R.anillos) R.anillos.setColorAt(p.i, c);
+    if(R.trims) R.trims.setColorAt(p.i, c);
   }
-  if(R.anillos.instanceColor) R.anillos.instanceColor.needsUpdate = true;
+  if(R.anillos?.instanceColor) R.anillos.instanceColor.needsUpdate = true;
+  if(R.trims?.instanceColor) R.trims.instanceColor.needsUpdate = true;
 }
 
-/* ── el movimiento: ornamento de un evento real, nunca un reloj propio ─────── */
-// Nadie camina porque sí. Los traslados se disparan SOLO desde `transiciones()`,
-// que compara el payload nuevo contra `R.previos`; `cuadro()` después apenas
-// interpola el viaje que ya está pedido. Con `prefers-reduced-motion` no hay
-// paseo: el estado se cuenta con el anillo, el globo y la pantalla.
-const VELOCIDAD = 1.05;          // m/s, dos pasos por segundo
-const MAX_CAMINANDO = 2;         // 26 esqueletos corriendo no son un adorno: son
-                                 // 26 mixers moviendo 26 armaduras por frame
-const ESTADA_S = 2.5;            // lo que tarda dejar algo en el banco de impresión
-const PASO_RUTA = 0.16;          // resolución en metros, menor que el pasillo entre puestos
-const MARGEN_RUTA = 0.08;        // espacio adicional alrededor de cada mueble
+function conteoEstados(agentes){
+  const c = { activos: 0, curso: 0, error: 0, reposo: 0 };
+  for(const a of agentes){
+    const e = colorDe(a);
+    if(e === 'curso'){ c.curso++; c.activos++; }
+    else if(e === 'error'){ c.error++; c.activos++; }
+    else if(e === 'ok'){ c.activos++; }
+    else if(e === 'reposo') c.reposo++;
+  }
+  return c;
+}
 
-const SCRATCH = new THREE.Object3D();
-const SCRATCH_COLOR = new THREE.Color();
-const SCRATCH_VEC = new THREE.Vector3();
+/* ── dinamica del carrusel ─────────────────────────────────────────────────── */
+// El carrusel gira SOLO cuando nadie está interactuando (drag / foco / sel
+// reciente). Al soltar queda inercia y, vencido el silencio, vuelve el giro.
+// Con prefers-reduced-motion no girà solo: el usuario manda siempre.
 
-// El bloqueo NO es por agente: `bloqueos_humanos()` habla de la red y de los
-// medios. Emparejar un bloqueo con un escritorio es HEURÍSTICA de este archivo, y
-// por eso el cartel dice "falta un humano (red)" y nunca le atribuye un número.
+// Sella el ángulo objetivo que deja al frente a la estación k: el frente de la
+// estación es fi + FASE, y queda al frente cuando fi + teta = FASE… es decir
+// teta = FASE − fi. Se elige la vuelta más corta desde teta actual.
+function targetPara(k){
+  const n = R.puestos.length;
+  if(!n) return R.teta;
+  const fi = R.puestos[k].fi;
+  let objetivo = FASE - fi;
+  const dosPi = Math.PI * 2;
+  while(objetivo - R.teta > Math.PI) objetivo -= dosPi;
+  while(objetivo - R.teta < -Math.PI) objetivo += dosPi;
+  return objetivo;
+}
+
+function adelante(){
+  const n = R.puestos.length;
+  if(!n) return -1;
+  let mejor = 0, mejorD = Infinity;
+  for(let i = 0; i < n; i++){
+    // Distancia angular del frente de la estación (fi + FASE) a la cámara.
+    let d = Math.abs(((R.puestos[i].fi + R.teta - FASE) % (Math.PI * 2) +
+      Math.PI * 2) % (Math.PI * 2));
+    if(d > Math.PI) d = Math.PI * 2 - d;
+    if(d < mejorD){ mejorD = d; mejor = i; }
+  }
+  return mejor;
+}
+
+function encuadrar(){
+  // Encuadre inicial: carrusel mirando al frente, cámara en su sitio.
+  R.teta = 0; R.vueltas = 0; R.sel = ''; R.modo = 'auto'; R.selObj = null;
+  R.vista = { dist: distanciaDeEncaje(), alturaFactor: 0.42 };
+}
+
+// Cuánto hay que retroceder para que el anillo entre entero. Three mide el
+// campo vertical: en un teléfono vertical la misma escena pide casi el triple
+// de distancia que en un monitor.
+function distanciaDeEncaje(){
+  const radio = R.radio;
+  const vf = 2 * Math.tan(THREE.MathUtils.degToRad(R.camara.fov / 2));
+  const porAlto = (radio * 2 + 4) / Math.max(0.55, vf);
+  const porAncho = (radio * 2 + 4) / (vf * Math.max(0.35, R.camara.aspect));
+  return Math.min(64, Math.max(porAlto, porAncho) + 3.5);
+}
+
+/* ── cámara ────────────────────────────────────────────────────────────────── */
+function aplicarCamara(){
+  const v = R.vista;
+  const dist = v.dist, altura = 1.4 + dist * v.alturaFactor;
+  // Parallax mínimo con el mouse: la cámara respira sin perder el encuadre.
+  const px = R.parallax?.x || 0, py = R.parallax?.y || 0;
+  R.camara.position.set(px * dist * 0.05, altura + py * 0.4, dist);
+  // Mirar un pelito más alto que el centro para que no aplaste la cabeza.
+  R.camara.lookAt(0, Math.min(2.0, altura * 0.28 + 0.4), 0);
+}
+
+/* ── entrada: drag con inercia, click, doucle-click, rueda, pellizco ──────── */
+function enlazar(){
+  const lienzo = R.renderer.domElement;
+  const señal = (R.al = new AbortController()).signal;
+  let arrastre = null;
+  const puntos = new Map();          // puntero activo → para pellizco en el celular
+  let pellizco = 0;
+
+  lienzo.addEventListener('pointerdown', e => {
+    puntos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if(puntos.size > 1){ arrastre = null; return; }
+    arrastre = { x: e.clientX, y: e.clientY, movido: 0, th: performance.now(), dt: R.teta, acel: 0, avance: 0 };
+    R.ultimoToque = performance.now();
+    lienzo.setPointerCapture?.(e.pointerId);
+  }, { signal: señal });
+
+  lienzo.addEventListener('pointermove', e => {
+    R.parallax = { x: (e.clientX - R.ancho / 2) / R.ancho * 2,
+                   y: (e.clientY - R.alto / 2) / R.alto * 2 };
+    if(puntos.has(e.pointerId)) puntos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if(puntos.size === 2){
+      const [a, b] = [...puntos.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if(pellizco) R.vista.dist = acotado(R.vista.dist * pellizco / Math.max(1, d),
+        R.radio * 0.9, distanciaDeEncaje() * 2.2);
+      pellizco = d;
+      return;
+    }
+    pellizco = 0;
+    if(!arrastre) return;
+    const dx = e.clientX - arrastre.x, dy = e.clientY - arrastre.y;
+    const desplazamiento = Math.abs(dx) + Math.abs(dy);
+    arrastre.movido = Math.max(arrastre.movido, desplazamiento);
+    if(desplazamiento < 2) return;
+    // El drag horizontal GIRA EL MUNDO (no la cámara): más natural en un carrusel.
+    const dTeta = -dx * 0.0042;
+    R.modo = 'mano';
+    R.teta += dTeta;
+    const ahora = performance.now();
+    const dtms = Math.max(16, ahora - arrastre.th);
+    arrastre.acel = acotado(dTeta / dtms, -1.4, 1.4);      // rad/ms — clamp de locura
+    arrastre.th = ahora;
+    arrastre.avance = dTeta;
+    arrastre.x = e.clientX; arrastre.y = e.clientY;
+    // Drag vertical: leve pitch de cámara, sin romance.
+    R.vista.alturaFactor = acotado(R.vista.alturaFactor + dy * 0.0004, 0.16, 0.72);
+    R.ultimoToque = ahora;
+  }, { signal: señal });
+
+  lienzo.addEventListener('pointerup', e => {
+    puntos.delete(e.pointerId);
+    const fueClick = arrastre && arrastre.movido < 6 && puntos.size === 0;
+    if(arrastre && arrastre.movido >= 6 && puntos.size === 0){
+      // Inercia: la velocidad del último tramo del arrastre sigue sola.
+      R.modo = 'vuelta';
+      R.vueltas = acotado(arrastre.acel, -0.9, 0.9) * 16;      // rad/s
+      R.ultimoToque = performance.now();
+    }
+    arrastre = null; pellizco = 0;
+    if(fueClick) seleccionar(e, false);
+  }, { signal: señal });
+
+  lienzo.addEventListener('pointercancel', e => {
+    puntos.delete(e.pointerId); arrastre = null; pellizco = 0;
+  }, { signal: señal });
+
+  lienzo.addEventListener('wheel', e => {
+    e.preventDefault();
+    R.vista.dist = acotado(R.vista.dist * (1 + (e.deltaY > 0 ? 0.12 : -0.12)),
+      R.radio * 0.9, distanciaDeEncaje() * 2.2);
+  }, { passive: false, signal: señal });
+  lienzo.addEventListener('dblclick', e => seleccionar(e, true), { signal: señal });
+
+  // Los botones que ya trae la plantilla: +/− y ⤢ (ver el anillo entero).
+  R.caja.querySelectorAll('.of-3d-cam [data-cam]').forEach(b => b.addEventListener('click', () => {
+    if(!R) return;
+    const v = R.vista;
+    if(b.dataset.cam === 'mas') v.dist = Math.max(R.radio * 0.9, v.dist * 0.78);
+    else if(b.dataset.cam === 'menos') v.dist = Math.min(distanciaDeEncaje() * 2.2, v.dist * 1.28);
+    else focar('');
+  }, { signal: señal }));
+
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden) pausar(); else reanudar();
+  }, { signal: señal });
+
+  // Girar el teléfono o colapsar un sidebar cambia el hueco: re-encuadrar.
+  R.ro = new ResizeObserver(ajustar);
+  R.ro.observe(R.caja);
+}
+
+function ajustar(){
+  if(!R) return;
+  const a = Math.max(320, R.caja.clientWidth), b = Math.max(240, R.caja.clientHeight);
+  if(a === R.ancho && b === R.alto) return;
+  R.ancho = a; R.alto = b;
+  R.renderer.setSize(a, b);
+  R.etiquetas.setSize(a, b);
+  R.camara.aspect = a / b;
+  R.camara.updateProjectionMatrix();
+  // Si hay una estación seleccionada se respeta el zoom que eligió la persona.
+  if(!R.sel) R.vista.dist = distanciaDeEncaje();
+  R.renderer.shadowMap.needsUpdate = true;
+}
+
+function seleccionar(e, enfocar){
+  const r = R.renderer.domElement.getBoundingClientRect();
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(
+    ((e.clientX - r.left) / r.width) * 2 - 1,
+    -((e.clientY - r.top) / r.height) * 2 + 1), R.camara);
+  // Se prueba contra la caja propia de cada estación (recalculada por frame
+  // con la matriz mundial): no hace falta malla invisible extra.
+  const punto = new THREE.Vector3();
+  let mejor = null, dmin = Infinity;
+  for(const p of R.puestos){
+    for(const box of [p.box, p.boxEscritorio]){
+      if(!box || !ray.ray.intersectBox(box, punto)) continue;
+      const d = punto.distanceTo(R.camara.position);
+      if(d < dmin){ dmin = d; mejor = p; }
+    }
+  }
+  if(!mejor){ if(enfocar) focar(''); return; }
+  R.sel = mejor.a.id;
+  pintarAcentos();
+  promover(mejor.i);                        // la estación va al frente
+  if(enfocar) R.vista.dist = Math.max(R.radio * 1.35, R.vista.dist * 0.62);
+  R.onSeleccion(mejor.a);
+}
+
+export function focar(id){
+  if(!R || !R.carrusel) return;
+  R.sel = id || '';
+  pintarAcentos();
+  if(!id){ encuadrar(); return; }
+  const k = R.puestos.findIndex(x => x.a.id === id);
+  if(k < 0) return;
+  promover(k);
+  R.vista.dist = Math.max(R.radio * 1.35, R.radio * 0.95);
+}
+
+/* ── el loop ───────────────────────────────────────────────────────────────── */
+function cuadro(){
+  if(!R) return;
+  R.raf = requestAnimationFrame(cuadro);
+  // dt con clamp: una pestaña dormida devuelve un delta enorme.
+  const dt = Math.min(0.05, R.reloj.getDelta());
+  const ahora = performance.now();
+
+  if(R.mov) for(const m of R.mixers) m.mixer.update(dt);
+
+  // 1. DINÁMICA DEL CARRUSEL — cuatro modos: auto (giro lento), mano
+  //    (agarrado por el drag), vuelta (inercia tras soltar) y foco (una
+  //    estación seleccionada viaja al frente).
+  if(R.modo === 'auto' && R.mov && R.selObj == null &&
+     ahora - R.ultimoToque > FALTA_S * 1000){
+    R.teta -= TORNA * dt * 1.0;
+  }else if(R.modo === 'vuelta'){
+    R.teta += R.vueltas * dt;
+    R.vueltas *= Math.exp(-dt * FRICCION);
+    if(Math.abs(R.vueltas) < 0.012) R.modo = 'auto';
+  }
+
+  // 2. FOCO: interpolar theta hacia el objetivo de la estación seleccionada.
+  if(R.selObj != null){
+    const objetivo = targetPara(R.selObj);
+    const f = 1 - Math.exp(-dt * DUREZA_FOCO);
+    R.teta += (objetivo - R.teta) * f;
+  }else if(R.sel){
+    const k = R.puestos.findIndex(x => x.a.id === R.sel);
+    if(k >= 0){ R.selObj = k; }             // siguió vivo en el reparto
+  }
+
+  if(R.carrusel) R.carrusel.rotation.y = R.teta;
+
+  // 3. CAJAS de click al día: solo si el carrusel se movió.
+  if(Math.abs(R.teta - R.tetaPrev) > 1e-5 && R.puestos.length){
+    R.tetaPrev = R.teta;
+    for(const p of R.puestos){
+      p.grupo.updateWorldMatrix(true, false);
+      p.box.copy(p.desc0).applyMatrix4(p.grupo.matrixWorld);
+      p.boxEscritorio.copy(p.descEscritorio).applyMatrix4(p.grupo.matrixWorld);
+      // Rótulos y globos se desvanecen si la estación mira al fondo: sin
+      // sopa de texto al lado de la estación del frente. El frente de la
+      // estación es fi + FASE; cos(Δ) = 1 cuando apunta a la cámara.
+      const frente = Math.cos(p.fi + R.teta - FASE);
+      if(p.rotulo) p.rotulo.element.style.opacity =
+        (0.32 + 0.68 * Math.max(0, frente)).toFixed(2);
+      if(p.etiqueta) p.etiqueta.element.style.opacity =
+        (0.35 + 0.65 * Math.max(0, frente)).toFixed(2);
+    }
+  }
+
+  // 4. Núcleo vivo + faros + polvo.
+  const t = ahora / 1000;
+  if(R.nucleo){
+    const pulso = 1 + 0.06 * Math.sin(t * 1.9);
+    R.nucleo.esfera.scale.setScalar(pulso);
+    R.nucleo.anilloA.rotation.z = t * 0.5;
+    R.nucleo.anilloA.rotation.y = t * 0.22;
+    R.nucleo.anilloB.rotation.z = -t * 0.33;
+    R.nucleo.anilloB.rotation.x = Math.PI / 1.9 + t * 0.15;
+    if(R.nucleo.tubo) R.nucleo.tubo.rotation.y = t * 0.1;
+  }
+  if(R.polvo){
+    R.polvo.rotation.y = t * 0.012;
+  }
+
+  // 5. Spot de escenario: viaja con la estación del frente (o la elegida).
+  const focal = R.sel ? R.puestos.findIndex(x => x.a.id === R.sel) : adelante();
+  if(focal >= 0 && R.puestos[focal]){
+    const p = R.puestos[focal];
+    p.grupo.updateWorldMatrix(true, false);
+    const punto = new THREE.Vector3().setFromMatrixPosition(p.grupo.matrixWorld);
+    punto.y = 1.2;
+    R.focoObjetivo.position.copy(punto);
+    // El spot viaja un poco detrás del espectador: es una luz de escenario.
+    R.foco.position.set(punto.x * 0.35, 7.5, Math.max(R.radio + 4.5, punto.z + 8));
+    // En modo paseo es apenas un latido; al seleccionar una estación sí
+    // se enciende de verdad. Intensidad alta sin selección = charco de luz
+    // sobre el piso que le roba contraste al anillo.
+    const flojo = 0.9 + 0.22 * Math.sin(t * 2.2);
+    R.foco.intensity = R.sel ? 2.1 : flojo;
+  }
+
+  aplicarCamara();
+  R.renderer.render(R.scene, R.camara);
+  R.etiquetas.render(R.scene, R.camara);
+  informarLiviano();
+}
+
+/* Los focos del carrusel: una estación seleccionada viaja al frente; sin
+   selección, el giro automático vuelve a dominar. */
+function promover(kObj){
+  R.selObj = (kObj != null) ? kObj : null;
+}
+
+export function pausar(){
+  if(!R) return;
+  R.corriendo = false;
+  if(R.raf) cancelAnimationFrame(R.raf);
+  R.raf = 0;
+}
+
+export function reanudar(){
+  if(!R || R.corriendo) return;
+  R.corriendo = true;
+  R.reloj.getDelta();                    // descarta el tiempo que estuvo pausado
+  cuadro();
+}
+
+// Un cambio de ámbito o de atención cambia físicamente la estructura.
+function firmaRoster(agentes){
+  return JSON.stringify(agentes.filter(a => a && a.id)
+    .map(a => [a.id, a.ambito || '', a.atiende !== false]));
+}
+
+export function actualizar(datos){
+  if(!R || !datos) return;
+  R.datos = datos;
+  const ids = firmaRoster(datos.agentes || []);
+  if(ids !== R.ids){
+    R.ids = ids;
+    desarmarEscena();
+    armar();
+    encuadrar();
+    R.pantallas && repintarPantallas(true);
+  }else{
+    // Mismos agentes: cambian los estados, y con eso el color del anillo, del
+    // trim, del rótulo y qué globos están a la vista. La geometría no se toca.
+    const porId = new Map((datos.agentes || []).filter(a => a && a.id).map(a => [a.id, a]));
+    R.puestos.forEach(p => {
+      const a = porId.get(p.a.id);
+      if(!a) return;
+      p.a = a; p.color = colorDe(a);
+      p.aviso = avisoDe(p, datos);          // puede aparecer o desaparecer
+      if(p.rotulo) llenarRotulo(p.rotulo.element, a);
+      if(p.mix.cur) p.mix.cur.paused = !R.mov || !a.en_curso;
+    });
+    transiciones();
+    pintarAcentos();
+    armarGlobos();
+  }
+  R.renderer.shadowMap.needsUpdate = true;
+}
+
+function transiciones(){
+  if(!R || !R.puestos.length) return;
+  repintarPantallas(false);
+}
+
+/* El bloqueo NO es por agente: `bloqueos_humanos()` habla de la red. Emparejar
+   un bloqueo con una estación es HEURÍSTICA de este archivo. */
 const AVISOS = [
   { agente: 'ia_reintento_listos', texto: 'ideas listas: falta un humano (red)',
     cuenta: b => (b.ideas_atascadas_listo || []).reduce((s, x) => s + (x.n || 0), 0) },
@@ -1143,581 +1510,39 @@ function avisoDe(p, datos){
   return null;
 }
 
-function irA(p, nombre){
-  const mix = p && p.mix;
-  if(!mix || !R.mov) return;
-  let nuevo = mix[nombre];
-  if(!nuevo) nuevo = nombre === 'walk' ? mix.idle : mix.sit;   // sin clip de paseo, que se pare
-  if(!nuevo || mix.cur === nuevo) return;
-  const viejo = mix.cur;
-  nuevo.setLoop(THREE.LoopRepeat, Infinity);
-  nuevo.reset();
-  nuevo.paused = false;
-  nuevo.play();
-  if(viejo) nuevo.crossFadeFrom(viejo, 0.3, false);
-  mix.cur = nuevo;
-}
-
-// Mueve al personaje y TODO lo que va pegado a él: el anillo, la sombra falsa
-// (InstancedMesh), el rótulo, el globo y la caja con la que se hace click.
-function pintarEn(p, x, z, facing){
-  p.x = x; p.z = z;
-  if(p.cuerpo){
-    p.cuerpo.position.set(x, 0, z);
-    if(facing != null) p.cuerpo.rotation.y = facing;
-  }
-  SCRATCH.rotation.set(0, 0, 0);
-  SCRATCH.position.set(x, 0.02, z); SCRATCH.scale.setScalar(1); SCRATCH.updateMatrix();
-  if(R.anillos) R.anillos.setMatrixAt(p.i, SCRATCH.matrix);
-  SCRATCH.position.set(x, 0.014, z); SCRATCH.scale.set(1.1, 1, 1.1); SCRATCH.updateMatrix();
-  if(R.sombras) R.sombras.setMatrixAt(p.i, SCRATCH.matrix);
-  const arriba = (p.caja0 || p.box).max.y;
-  if(p.rotulo) p.rotulo.position.set(x, arriba + 0.1, z);
-  if(p.etiqueta) p.etiqueta.position.set(x, arriba + 0.72, z);
-  p.box.copy(p.caja0).translate(SCRATCH_VEC.set(x - p.sitX, 0, z - p.sitZ));
-}
-
-function sentarse(p){
-  // Una ruta cancelada también libera su cupo, no solo una que llega al destino.
-  if(p.ruta) R.caminando = Math.max(0, R.caminando - 1);
-  p.ruta = null; p.hasta = 0; p.alVuelta = false; p.enEspera = false;
-  p.pedido = null; p.enReunion = false; p.salida = 0;
-  pintarEn(p, p.sitX, p.sitZ, p.giro);
-  if(R.anillos) R.anillos.instanceMatrix.needsUpdate = true;
-  if(R.sombras) R.sombras.instanceMatrix.needsUpdate = true;
-  irA(p, 'sit');
-  if(p.mix.cur) p.mix.cur.paused = !R.mov || !p.a.en_curso;
-  reanudarPendientes();
-}
-
-// Comprueba el segmento completo, no solo sus extremos: evita cortar esquinas.
-function segmentoLibre(a, b, obstaculos){
-  for(const o of obstaculos){
-    let entrada = 0, salida = 1;
-    for(const [v, d, min, max] of [[a[0], b[0] - a[0], o.minX, o.maxX],
-                                    [a[1], b[1] - a[1], o.minZ, o.maxZ]]){
-      if(Math.abs(d) < 1e-9){
-        if(v < min || v > max){ entrada = 2; break; }
-      }else{
-        const t1 = (min - v) / d, t2 = (max - v) / d;
-        entrada = Math.max(entrada, Math.min(t1, t2));
-        salida = Math.min(salida, Math.max(t1, t2));
-      }
-    }
-    if(entrada <= salida && entrada <= 1 && salida >= 0) return false;
-  }
-  return true;
-}
-
-// Dijkstra sobre una grilla pequeña de la sala. La silla propia se excluye para
-// poder levantarse y volver a sentarse; todas las demás siguen siendo obstáculos.
-// Si el destino está dentro de un mueble se elige el punto alcanzable más cercano.
-function calcularRuta(nav, inicio, destino, dueño, exigirDestino = false){
-  if(!nav) return null;
-  const obstaculos = nav.obstaculos.filter(o => o.dueño !== dueño).map(o => ({
-    minX: o.minX - MARGEN_RUTA, maxX: o.maxX + MARGEN_RUTA,
-    minZ: o.minZ - MARGEN_RUTA, maxZ: o.maxZ + MARGEN_RUTA,
-  }));
-  const margen = PARED / 2 + MARGEN_RUTA;
-  const nx = Math.floor((nav.W - 2 * margen) / PASO_RUTA) + 1;
-  const nz = Math.floor((nav.D - 2 * margen) / PASO_RUTA) + 1;
-  if(nx < 1 || nz < 1) return null;
-  const punto = i => [margen + (i % nx) * PASO_RUTA,
-                       margen + Math.floor(i / nx) * PASO_RUTA];
-  const total = nx * nz, libres = new Uint8Array(total);
-  // Solo los obstáculos cercanos a una celda pueden cortar sus ocho aristas.
-  // Sin este índice cada paso revisaría todos los escritorios de la redacción.
-  const cercanos = Array.from({ length: total }, () => []);
-  for(const o of obstaculos){
-    const x0 = Math.max(0, Math.floor((o.minX - margen) / PASO_RUTA) - 1);
-    const x1 = Math.min(nx - 1, Math.ceil((o.maxX - margen) / PASO_RUTA) + 1);
-    const z0 = Math.max(0, Math.floor((o.minZ - margen) / PASO_RUTA) - 1);
-    const z1 = Math.min(nz - 1, Math.ceil((o.maxZ - margen) / PASO_RUTA) + 1);
-    for(let z = z0; z <= z1; z++) for(let x = x0; x <= x1; x++) cercanos[z * nx + x].push(o);
-  }
-  for(let i = 0; i < total; i++) libres[i] = segmentoLibre(punto(i), punto(i), cercanos[i]) ? 1 : 0;
-  if(!segmentoLibre(inicio, inicio, obstaculos)) return null;
-  const dist = new Float64Array(total); dist.fill(Infinity);
-  const prev = new Int32Array(total); prev.fill(-1);
-  const cola = [];
-  function poner(i, d){
-    const item = { i, d }; let k = cola.length; cola.push(item);
-    while(k){ const padre = (k - 1) >> 1; if(cola[padre].d <= d) break;
-      cola[k] = cola[padre]; k = padre; }
-    cola[k] = item;
-  }
-  function sacar(){
-    const primero = cola[0], ultimo = cola.pop();
-    if(cola.length){
-      let k = 0;
-      while(k * 2 + 1 < cola.length){
-        let hijo = k * 2 + 1;
-        if(hijo + 1 < cola.length && cola[hijo + 1].d < cola[hijo].d) hijo++;
-        if(cola[hijo].d >= ultimo.d) break;
-        cola[k] = cola[hijo]; k = hijo;
-      }
-      cola[k] = ultimo;
-    }
-    return primero;
-  }
-  for(let i = 0; i < total; i++){
-    if(!libres[i]) continue;
-    const q = punto(i), d = Math.hypot(q[0] - inicio[0], q[1] - inicio[1]);
-    if(d <= PASO_RUTA * 2 && segmentoLibre(inicio, q, obstaculos)){
-      dist[i] = d; poner(i, d);
-    }
-  }
-  const destinoLibre = destino[0] >= margen && destino[0] <= nav.W - margen &&
-    destino[1] >= margen && destino[1] <= nav.D - margen &&
-    segmentoLibre(destino, destino, obstaculos);
-  let mejor = -1, distanciaMejor = Infinity, finalExacto = false;
-  while(cola.length){
-    const actual = sacar(), i = actual.i;
-    if(actual.d !== dist[i]) continue;
-    const q = punto(i), alDestino = Math.hypot(q[0] - destino[0], q[1] - destino[1]);
-    if(alDestino < distanciaMejor){ mejor = i; distanciaMejor = alDestino; }
-    if(destinoLibre && alDestino <= PASO_RUTA * 2 && segmentoLibre(q, destino, obstaculos)){
-      mejor = i; finalExacto = true; break;
-    }
-    const x = i % nx, z = Math.floor(i / nx);
-    for(let dz = -1; dz <= 1; dz++) for(let dx = -1; dx <= 1; dx++){
-      if(!dx && !dz) continue;
-      const xx = x + dx, zz = z + dz;
-      if(xx < 0 || xx >= nx || zz < 0 || zz >= nz) continue;
-      const j = zz * nx + xx;
-      if(!libres[j] || !segmentoLibre(q, punto(j), cercanos[i])) continue;
-      const d = actual.d + PASO_RUTA * Math.hypot(dx, dz);
-      if(d < dist[j]){ dist[j] = d; prev[j] = i; poner(j, d); }
-    }
-  }
-  // Nunca usar un punto inaccesible como si fuera el escritorio o el mueble.
-  if(mejor < 0 || (destinoLibre && !finalExacto) ||
-     (exigirDestino && !finalExacto) || (!destinoLibre && distanciaMejor > 1.5)) return null;
-  const pasos = [];
-  for(let i = mejor; i >= 0; i = prev[i]) pasos.push(punto(i));
-  pasos.reverse();
-  pasos.unshift(inicio);
-  if(finalExacto) pasos.push(destino);
-  // Simplifica solo cuando el segmento entero está libre de mobiliario.
-  const ruta = [pasos[0]];
-  for(let i = 0; i < pasos.length - 1;){
-    let j = pasos.length - 1;
-    while(j > i + 1 && !segmentoLibre(pasos[i], pasos[j], obstaculos)) j--;
-    ruta.push(pasos[j]); i = j;
-  }
-  return ruta;
-}
-
-function irDeViaje(p, destino, al){
-  if(!p || !p.cuerpo || !R.mov || !p.escritorio || !R.muebles) return false;
-  if(Math.hypot(destino[0] - p.x, destino[1] - p.z) < 0.08){
-    p.enEspera = false; p.pedido = null; return false;
-  }
-  if(R.caminando >= MAX_CAMINANDO){ p.enEspera = true; p.pedido = { destino, al }; return false; }
-  const pasos = calcularRuta(R.navegacion, [p.x, p.z], destino, p.a.id, al === 'puesto');
-  if(!pasos || pasos.length < 2){ p.enEspera = false; p.pedido = null; return false; }
-  const tramos = [], t0 = performance.now();
-  let largo = 0;
-  for(let i = 1; i < pasos.length; i++){
-    const d = Math.hypot(pasos[i][0] - pasos[i - 1][0], pasos[i][1] - pasos[i - 1][1]);
-    if(d > 1e-6){ tramos.push({ de: pasos[i - 1], a: pasos[i], desde: largo, largo: d }); largo += d; }
-  }
-  if(!largo){ p.enEspera = false; p.pedido = null; return false; }
-  p.ruta = { tramos, largo, dur: largo / VELOCIDAD, al, t0 };
-  if(!p.salida) p.salida = t0;
-  p.enEspera = false; p.pedido = null;
-  R.caminando++;
-  irA(p, 'walk');
-  return true;
-}
-
-function reanudarPendientes(){
-  while(R.caminando < MAX_CAMINANDO){
-    const esperando = R.puestos.find(p => p.enEspera && p.pedido);
-    if(!esperando) return;
-    const pedido = esperando.pedido;
-    irDeViaje(esperando, pedido.destino, pedido.al);
-  }
-}
-
-// Interrumpir un viaje no debe atravesar la oficina por teletransporte.
-function regresar(p){
-  if(p.ruta) R.caminando = Math.max(0, R.caminando - 1);
-  p.ruta = null; p.hasta = 0; p.alVuelta = false; p.enReunion = false;
-  p.enEspera = false; p.pedido = null;
-  if(Math.hypot(p.x - p.sitX, p.z - p.sitZ) < 0.08) sentarse(p);
-  else if(!irDeViaje(p, [p.sitX, p.sitZ], 'puesto') && !p.enEspera){
-    irA(p, 'idle');
-    if(p.mix.cur) p.mix.cur.paused = true;
-  }
-  reanudarPendientes();
-}
-
-function avanzarMovimientos(ahora){
-  if(!R || !R.mov) return;
-  let movido = false;
-  R.tiempo = ahora;
-  for(const p of R.puestos){
-    if(p.hasta){
-      movido = true;
-      if(ahora < p.hasta) continue;
-      p.hasta = 0;
-      if(p.alVuelta){ p.alVuelta = false; regresar(p); }
-      else sentarse(p);
-      continue;
-    }
-    if(p.enEspera){
-      // El tercero no camina: le parpadea el anillo hasta que se libera un viaje.
-      SCRATCH_COLOR.setHex(COLOR[p.color] ?? COLOR.sinturno)
-        .multiplyScalar(0.55 + 0.45 * Math.abs(Math.sin(ahora / 333)));
-      if(R.anillos) R.anillos.setColorAt(p.i, SCRATCH_COLOR);
-      if(R.anillos && R.anillos.instanceColor) R.anillos.instanceColor.needsUpdate = true;
-      continue;
-    }
-    const r = p.ruta;
-    if(!r) continue;
-    const vivo = ahora - r.t0;
-    const f = Math.max(0, Math.min(1, vivo / (r.dur * 1000)));
-    // Arranque y frenado suaves, sin alterar la duración medida en pared.
-    const paso = f * f * (3 - 2 * f);
-    const recorrido = paso * r.largo;
-    const tramo = r.tramos.find(t => recorrido <= t.desde + t.largo) || r.tramos[r.tramos.length - 1];
-    const u = Math.max(0, Math.min(1, (recorrido - tramo.desde) / tramo.largo));
-    const x = tramo.de[0] + (tramo.a[0] - tramo.de[0]) * u;
-    const z = tramo.de[1] + (tramo.a[1] - tramo.de[1]) * u;
-    // El modelo mira a +Z con rotation.y=0; gira siguiendo cada tramo.
-    pintarEn(p, x, z, Math.atan2(tramo.a[0] - tramo.de[0], tramo.a[1] - tramo.de[1]));
-    movido = true;
-    if(f >= 1){
-      p.ruta = null;
-      R.caminando = Math.max(0, R.caminando - 1);
-      if(r.al === 'impresora'){
-        p.hasta = ahora + ESTADA_S * 1000; p.alVuelta = true; irA(p, 'idle');
-      }else if(r.al === 'mesa'){
-        p.enReunion = true; irA(p, 'idle');     // en la mesa hasta que se despeje
-      }else sentarse(p);                        // vuelta o viaje cortado: en su puesto
-      reanudarPendientes();
-    }
-  }
-  if(movido){
-    if(R.anillos) R.anillos.instanceMatrix.needsUpdate = true;
-    if(R.sombras) R.sombras.instanceMatrix.needsUpdate = true;
-  }
-}
-
-// La única fuente de transiciones es el payload. Se compara contra lo que se vio
-// en el refresco anterior (`R.previos`), nunca contra un reloj de la escena.
-function transiciones(){
-  if(!R || !R.puestos.length) return;
-  const nuevos = {}, datos = R.datos || {};
-  for(const p of R.puestos){
-    const a = p.a;
-    if(!a || !a.id) continue;
-    const u = a.ultima || {};
-    const aviso = avisoDe(p, datos);
-    const antes = R.previos[a.id];
-    nuevos[a.id] = { en_curso: !!a.en_curso, ok: u.ok, perdido: u.perdido,
-                     estado: a.estado, aviso: !!aviso, hoy: a.hoy };
-    p.aviso = aviso;
-    if(!antes) continue;                     // primer refresco: no hay nada que contar
-    if(a.estado !== 'activo'){               // gate apagado: se sienta y no se mueve más
-      if((p.ruta && p.ruta.al !== 'puesto') || p.hasta || p.enReunion ||
-         (p.enEspera && p.pedido && p.pedido.al !== 'puesto')) regresar(p);
-      else if(!p.ruta && !p.enEspera && p.mix.cur) p.mix.cur.paused = true;
-      p.enReunion = false;
-      continue;
-    }
-    if(!antes.en_curso && a.en_curso){
-      // Se sentó a trabajar: si estaba de reunión o de paseo, vuelve al puesto.
-      if((p.ruta && p.ruta.al !== 'puesto') || p.hasta || p.enReunion ||
-         (p.enEspera && p.pedido && p.pedido.al !== 'puesto')) regresar(p);
-      else if(!p.ruta && !p.enEspera){ irA(p, 'sit'); if(p.mix.cur && R.mov) p.mix.cur.paused = false; }
-    }
-    if(antes.en_curso && !a.en_curso){
-      if(u.ok === false || u.perdido){
-        // Turno que terminó mal: el anillo rojo y el globo ya lo dicen. Un
-        // personaje "llevando algo a imprimir" que falló sería teatro.
-      }else if(!p.ruta && !p.enEspera && aviso && R.muebles){
-        irDeViaje(p, R.muebles.mesa, 'mesa');
-      }else if(!p.ruta && !p.enEspera && Number.isFinite(a.hoy) && Number.isFinite(antes.hoy) &&
-                a.hoy > antes.hoy && R.muebles){
-        // Es una representación visual de un aumento observado, no una prueba
-        // de que esa corrida haya producido la pieza (los contadores son compartidos).
-        irDeViaje(p, R.muebles.impresora, 'impresora');
-      }
-      if(!p.ruta && !p.enEspera && !p.enReunion && p.mix.cur) p.mix.cur.paused = true;
-    }
-    if(!antes.aviso && aviso && !a.en_curso && !p.enReunion && !p.ruta && !p.enEspera && R.muebles){
-      irDeViaje(p, R.muebles.mesa, 'mesa');
-    }else if(antes.aviso && !aviso){
-      if(p.enReunion){
-        regresar(p);
-      }else if((p.ruta && p.ruta.al === 'mesa') ||
-               (p.pedido && p.pedido.al === 'mesa')){
-        regresar(p);
-      }
-    }
-  }
-  R.previos = nuevos;
-  repintarPantallas(false);
-}
-
-/* ── encuadre ───────────────────────────────────────────────────────────────── */
-function encuadrarTodo(){
-  const { cols, rows } = R.g;
-  const W = cols * CELDA_X, D = rows * CELDA_Z + BANDA;
-  const [bx, bz] = [W, D];
-  R.orbita.tx = R.orbita.ttx = bx / 2;
-  R.orbita.tz = R.orbita.ttz = bz / 2;
-  R.orbita.r = R.orbita.tr = distanciaDeEncaje();
-}
-
-/* ── cámara orbital a mano ─────────────────────────────────────────────────── */
-// Sin OrbitControls: el addon no está vendorizado, y una órbita con dos ejes y
-// zoom son ~30 líneas — menos de las que cuesta parcharla para que no pelee con
-// el click de selección.
-function aplicarCamara(){
-  const o = R.orbita;
-  o.r += (o.tr - o.r) * 0.16;
-  o.tx += (o.ttx - o.tx) * 0.16;
-  o.tz += (o.ttz - o.tz) * 0.16;
-  const ph = Math.min(FASE_MAX, Math.max(0.22, o.ph));
-  R.camara.position.set(
-    o.tx + o.r * Math.sin(ph) * Math.cos(o.th),
-    o.r * Math.cos(ph) + 1.2,
-    o.tz + o.r * Math.sin(ph) * Math.sin(o.th));
-  R.camara.lookAt(o.tx, 1.0, o.tz);
-}
-
-// Cuánto hay que retroceder para que la sala entre entera. Three mide el campo
-// vertical: el ancho útil es fov·tan(fov/2)·aspect, así que en un teléfono vertical
-// (aspect ~0,6) la misma sala pide casi el triple de distancia que en un monitor.
-// Con la distancia fija del desktop, en el celular se veía una pared de cerca.
-function distanciaDeEncaje(){
-  const [w, d] = [R.g.cols * CELDA_X, R.g.rows * CELDA_Z + BANDA];
-  const mayor = Math.max(w, d);
-  const vf = 2 * Math.tan(THREE.MathUtils.degToRad(R.camara.fov / 2));
-  const porAlto = mayor / vf;
-  const porAncho = mayor / (vf * Math.max(0.35, R.camara.aspect));
-  return Math.min(70, Math.max(porAlto, porAncho) * 1.12 + 3);
-}
-
-function enlazar(){
-  const lienzo = R.renderer.domElement;
-  const o = R.orbita;
-  // Un AbortController por montaje: los botones de cámara viven en la plantilla,
-  // no en la escena, así que sin esto cada re-entrada acumulaba un listener más
-  // apuntando a la órbita de una escena que ya no existe (el + terminaba haciendo
-  // zoom de a tres).
-  const señal = (R.al = new AbortController()).signal;
-  let arrastre = null;
-  const puntos = new Map();          // puntero activo → para pellizco en el celular
-  let pellizco = 0;
-
-  lienzo.addEventListener('pointerdown', e => {
-    puntos.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if(puntos.size > 1){ arrastre = null; return; }
-    arrastre = { x: e.clientX, y: e.clientY, th: o.th, ph: o.ph, movido: 0 };
-    lienzo.setPointerCapture?.(e.pointerId);
-  }, { signal: señal });
-  lienzo.addEventListener('pointermove', e => {
-    if(puntos.has(e.pointerId)) puntos.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if(puntos.size === 2){
-      const [a, b] = [...puntos.values()];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if(pellizco) o.tr = Math.min(70, Math.max(4, o.tr * (pellizco / Math.max(1, d))));
-      pellizco = d;
-      return;
-    }
-    pellizco = 0;
-    if(!arrastre) return;
-    const dx = e.clientX - arrastre.x, dy = e.clientY - arrastre.y;
-    arrastre.movido = Math.max(arrastre.movido, Math.abs(dx) + Math.abs(dy));
-    o.th = arrastre.th - dx * 0.006;
-    o.ph = Math.min(FASE_MAX, Math.max(0.22, arrastre.ph - dy * 0.005));
-  }, { signal: señal });
-  lienzo.addEventListener('pointerup', e => {
-    puntos.delete(e.pointerId);
-    const fueClick = arrastre && arrastre.movido < 6 && puntos.size === 0;
-    arrastre = null; pellizco = 0;
-    if(fueClick) seleccionar(e, false);
-  }, { signal: señal });
-  lienzo.addEventListener('pointercancel', e => {
-    puntos.delete(e.pointerId); arrastre = null; pellizco = 0;
-  }, { signal: señal });
-  lienzo.addEventListener('wheel', e => {
-    e.preventDefault();
-    o.tr = Math.min(70, Math.max(4, o.tr * (1 + (e.deltaY > 0 ? 0.12 : -0.12))));
-  }, { passive: false, signal: señal });
-  lienzo.addEventListener('dblclick', e => seleccionar(e, true), { signal: señal });
-
-  // Los botones que ya trae la plantilla: +/− y ⤢ (ver toda la redacción).
-  R.caja.querySelectorAll('.of-3d-cam [data-cam]').forEach(b => b.addEventListener('click', () => {
-    if(!R) return;
-    const ob = R.orbita;
-    if(b.dataset.cam === 'mas') ob.tr = Math.max(4, ob.tr * 0.78);
-    else if(b.dataset.cam === 'menos') ob.tr = Math.min(70, ob.tr * 1.28);
-    else focar('');
-  }, { signal: señal }));
-
-  document.addEventListener('visibilitychange', () => {
-    if(document.hidden) pausar(); else reanudar();
-  }, { signal: señal });
-
-  // Girar el teléfono, colapsar un sidebar o cambiar de vista cambia el hueco: la
-  // sala tiene que volver a encuadrarse. `ajustar` se llama también al terminar el
-  // montaje, porque si la caja todavía no estaba mediible (el cambio de medio llega
-  // mientras la sala baja) el renderer nace con el mínimo de 320×240 y sin esta
-  // segunda pasada se queda ahí para siempre.
-  R.ro = new ResizeObserver(ajustar);
-  R.ro.observe(R.caja);
-}
-
-function ajustar(){
-  if(!R) return;
-  const a = Math.max(320, R.caja.clientWidth), b = Math.max(240, R.caja.clientHeight);
-  if(a === R.ancho && b === R.alto) return;
-  R.ancho = a; R.alto = b;
-  R.renderer.setSize(a, b);
-  R.etiquetas.setSize(a, b);
-  R.camara.aspect = a / b;
-  R.camara.updateProjectionMatrix();
-  // Si hay un puesto seleccionado se respeta el zoom que eligió la persona.
-  if(!R.sel) R.orbita.tr = distanciaDeEncaje();
-  R.renderer.shadowMap.needsUpdate = true;
-}
-
-function seleccionar(e, enfocar){
-  const r = R.renderer.domElement.getBoundingClientRect();
-  const ray = new THREE.Raycaster();
-  ray.setFromCamera(new THREE.Vector2(
-    ((e.clientX - r.left) / r.width) * 2 - 1,
-    -((e.clientY - r.top) / r.height) * 2 + 1), R.camara);
-  // Se prueba contra la caja propia de cada personaje: poner mallas invisibles
-  // de pick serían 25 objetos más en la escena para el mismo resultado.
-  const punto = new THREE.Vector3();
-  let mejor = null, dmin = Infinity;
-  const candidatos = R.puestos;
-  for(const p of candidatos){
-    for(const box of [p.box, p.boxEscritorio]){
-      if(!box || !ray.ray.intersectBox(box, punto)) continue;
-      const d = punto.distanceTo(R.camara.position);
-      if(d < dmin){ dmin = d; mejor = p; }
-    }
-  }
-  if(!mejor){ if(enfocar) focar(''); return; }
-  R.sel = mejor.a.id;
-  pintarAnillos();
-  if(enfocar) focar(mejor.a.id);
-  R.onSeleccion(mejor.a);
-}
-
-export function focar(id){
-  if(!R || !R.g) return;
-  R.sel = id || '';
-  pintarAnillos();
-  const o = R.orbita;
-  if(!id){ encuadrarTodo(); return; }
-  const p = R.puestos.find(x => x.a.id === id);
-  if(!p) return;
-  o.ttx = p.x; o.ttz = p.z; o.tr = 6.5;
-}
-
-/* ── el loop ───────────────────────────────────────────────────────────────── */
-function cuadro(){
-  if(!R) return;
-  R.raf = requestAnimationFrame(cuadro);
-  // dt con clamp: una pestaña dormida devuelve un delta enorme y el personaje se
-  // teletransporta o se queda sin pose.
-  const dt = Math.min(0.05, R.reloj.getDelta());
-  if(R.mov) for(const m of R.mixers) m.mixer.update(dt);
-  // El único reloj de la escena: interpola los viajes que YA pidió `transiciones`.
-  // Con tiempo de pared, no con el dt clampeado de los mixers.
-  avanzarMovimientos(performance.now());
-  aplicarCamara();
-  R.renderer.render(R.scene, R.camara);
-  R.etiquetas.render(R.scene, R.camara);
-}
-
-export function pausar(){
-  if(!R) return;
-  R.corriendo = false;
-  if(R.raf) cancelAnimationFrame(R.raf);
-  R.raf = 0;
-}
-
-export function reanudar(){
-  if(!R || R.corriendo) return;
-  R.corriendo = true;
-  R.reloj.getDelta();                    // descarta el tiempo que estuvo pausado
-  cuadro();
-}
-
-// Un cambio de ámbito o de atención cambia físicamente la distribución.
-function firmaRoster(agentes){
-  return JSON.stringify(agentes.filter(a => a && a.id)
-    .map(a => [a.id, a.ambito || '', a.atiende !== false]));
-}
-
-export function actualizar(datos){
-  if(!R || !datos) return;
-  R.datos = datos;
-  const ids = firmaRoster(datos.agentes || []);
-  if(ids !== R.ids){
-    R.ids = ids;
-    desarmarEscena();
-    armar();
-  }else{
-    // Mismos agentes en el mismo orden: cambian los estados, y con eso el color
-    // del anillo, el rótulo y qué globos están a la vista. La geometría no se toca.
-    const porId = new Map((datos.agentes || []).filter(a => a && a.id).map(a => [a.id, a]));
-    R.puestos.forEach(p => {
-      const a = porId.get(p.a.id);
-      if(!a) return;
-      p.a = a; p.color = colorDe(a);
-      if(p.rotulo) llenarRotulo(p.rotulo.element, a);
-    });
-    // Primero se decide quién empezó o terminó (y con eso quién camina y qué dice
-    // su pantalla), después se pintan anillos y globos con lo que quedó.
-    transiciones();
-    pintarAnillos();
-    armarGlobos();
-  }
-  R.renderer.shadowMap.needsUpdate = true;
-  informar();
-}
-
 function desarmarEscena(){
-  if(!R || !R.g) return;
-  const { g } = R.g;
+  if(!R || !R.carrusel) return;
+  const g = R.carrusel;
   R.scene.remove(g);
-  R.scene.remove(R.sol?.target);
-  // Se dispone SOLO lo que esta escena creó. La geometría, los materiales y las
-  // texturas de los GLB son de la caché compartida (`COMPARTIDO`): disponerlos
-  // rompería el próximo montaje, y el parquet o la sombra en canvas viven a nivel
-  // módulo desde la primera sala.
+  R.scene.remove(R.clave?.target);
+  // 1. Todo lo que armó esta escena fuera del carrusel: piso, dais, cara,
+  //    anillos guía, núcleo, faros y polvo. Nada de esto es de la caché.
+  R.descartables.forEach(deshacer);
+  R.descartables = [];
+  R.nucleo = null; R.faros = null; R.polvo = null;
+  // 2. El carrusel: mallas, instancias y elementos DOM de los rótulos/globos.
+  //    Se dispone SOLO lo que esta escena creó: la geometría y los materiales
+  //    de los GLB son de la caché compartida (`COMPARTIDO`).
   g.traverse(o => {
-    if(o.isCSS2DObject) o.element?.remove();
-    if(!o.isMesh) return;
-    if(o.geometry && COMPARTIDO && COMPARTIDO.has(o.geometry.uuid)) return;
-    o.geometry?.dispose?.();
+    if(o.isCSS2DObject){ o.element?.remove(); return; }
+    if(o.isInstancedMesh) o.dispose?.();    // libera los buffers de instancia
+    if(!o.isMesh && !o.isInstancedMesh && !o.isPoints) return;
+    let propio = !o.geometry || !COMPARTIDO?.has(o.geometry.uuid);
+    if(propio) o.geometry?.dispose?.();
     const mats = Array.isArray(o.material) ? o.material : [o.material];
-    // `Material.dispose()` NO toca sus texturas: por eso el map compartido
-    // sobrevive y el parquet no hay que regenerarlo en cada montaje.
-    for(const m of mats) if(m && !COMPARTIDO?.has(m.uuid)) m.dispose?.();
+    for(const m of mats) if(m && !COMPARTIDO?.has(m.uuid)) m?.dispose?.();
   });
-  R.g = null; R.puestos = []; R.mixers = []; R.anillos = null; R.sombras = null;
-  R.alfombras = null; R.cartel = null;
-  // Las pantallas se desmontan con la sala, pero el ATLAS es de nivel módulo a
-  // propósito: es UNA textura para toda la app y `traverse` nunca dispone un `map`
-  // compartido. Los `LineSegments` de la caja de verificación tampoco los recorre
-  // el lazo de meshes (no son `isMesh`), así que se disponen acá.
+  ['plataformas', 'trims', 'faros'].forEach(k => { R[k] = null; });
+  // CSS2D de elementos fuera del carrusel (cartel del núcleo).
+  R.cartel?.element?.remove();
+  R.cartel = null;
+  R.puestos = []; R.mixers = []; R.anillos = null; R.sombras = null;
+  R.trims = null; R.plataformas = null;
   if(R.cajas) for(const c of R.cajas){ c.parent?.remove(c); c.material?.dispose?.(); }
-  (R.cajasGeo || []).forEach(gg => gg.dispose?.());
+  (R.cajasGeo || []).forEach(gg => gg?.dispose?.());
   R.pantallas = null; R.cajas = null; R.cajasGeo = null;
-  // Nadie arrastra el estado del medio anterior: `R.previos` está indexado por id
-  // de agente y los mismos ids se repiten de una oficina a otra.
-  R.previos = {}; R.caminando = 0; R.tiempo = 0; R.navegacion = null;
+  R.previos = {}; R.selObj = null; R.tetaPrev = -1; R.teta = 0; R.vueltas = 0;
+  R.carrusel = null;
 }
 
 export function destruir(){
@@ -1740,32 +1565,32 @@ function destruirReal(){
   return Promise.resolve();
 }
 
+/* Contadores livianos cada 2 s: información de arnés sin spam por frame. */
+let ultimoInforme = 0;
+function informarLiviano(){
+  if(!R || performance.now() - ultimoInforme < 2000) return;
+  ultimoInforme = performance.now();
+  informar();
+}
+
 function informar(){
-  if(!R || !R.g) return;
+  if(!R || !R.carrusel) return;
   const i = R.renderer.info;
-  const base = {
+  const cuenta = conteoEstados((R.datos.agentes || []));
+  window.__OF3D_INFO__ = {
     modo: R.modo,
-    // Con `prefers-reduced-motion` la escena no mueve nada: el arnés tiene que
-    // poder comprobar que el estado se comunica igual, por anillo y pantalla.
     mov: R.mov,
     draws: i.render.calls, geometrias: i.memory.geometries, texturas: i.memory.textures,
-    cols: R.g.cols, rows: R.g.rows,
-    ancho: R.g.cols * CELDA_X,
-    alto: R.g.rows * CELDA_Z + BANDA,
+    radio: R.radio, teta: R.teta,
+    cols: R.puestos.length, rows: 1,
+    agentes: R.puestos.length,
+    propios: R.puestos.length, enLaRed: 0,
+    activos: cuenta.activos, trabajando: cuenta.curso, errores: cuenta.error,
+    rotulos: R.puestos.filter(p => p.rotulo).length,
+    globos: R.puestos.filter(p => p.etiqueta).length,
+    animados: R.mixers.length,
+    pantallas: R.pantallas ? R.pantallas.conPc.length : 0,
+    frente: adelante(),
+    ejemploRotulo: R.puestos[0]?.rotulo?.element?.textContent || '',
   };
-  window.__OF3D_INFO__ = { ...base,
-        agentes: R.puestos.length,
-        propios: R.g.agentes.length, enLaRed: R.g.red.length,
-        rotulos: R.puestos.filter(p => p.rotulo).length,
-        globos: R.puestos.filter(p => p.etiqueta).length,
-        animados: R.mixers.length,
-        // Lo que el arnés tiene que ver: los quad de pantalla son UN mesh (un draw
-        // más, no veintiséis) y nunca hay más de MAX_CAMINANDO en el piso.
-        pantallas: R.pantallas ? R.pantallas.conPc.length : 0,
-        caminando: R.caminando,
-        // Quién está LEJOS de su puesto (viaje o estada): es la prueba de que el
-        // traslado empezó y, sobre todo, de que terminó y se sentó de nuevo.
-        afuera: R.puestos.filter(p => Math.hypot(p.x - p.sitX, p.z - p.sitZ) > 0.05)
-                         .map(p => p.a.id),
-        ejemploRotulo: R.puestos[0]?.rotulo?.element?.textContent || '' };
 }

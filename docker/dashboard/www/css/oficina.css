@@ -141,17 +141,20 @@
   #of3D .of-cartel{max-width:120px}
 }
 
-/* Rótulos y globos (DOM sobre la escena). Pegados arriba del puesto, por eso
-   se colocan con transform y no con margen. El oficio va en SEGUNDA línea: al
-   dejarlo suelto, "NIDIA BUSTOS" + "COMMUNITY MANAGER" se escribían corridos y
-   el rótulo medía el doble de ancho, que es justo lo que se pisaba con el del
-   puesto de al lado en las filas de atrás.
-   LLEVA PLACA: sin fondo, el gris claro sobre el parquet se licuaba en las filas
-   del fondo, donde la perspectiva apila diez rótulos en veinte píxeles de pantalla. */
+/* Rótulos y globos (DOM sobre la escena). Pegados arriba del puesto. El oficio
+   va en SEGUNDA línea: al dejarlo suelto, "NIDIA BUSTOS" + "COMMUNITY MANAGER"
+   se escribían corridos y el rótulo medía el doble de ancho, que es justo lo
+   que se pisaba con el del puesto de al lado.
+   La opacidad la maneja JS por frame (según qué tan de frente mira la estación
+   a la cámara): por eso lleva transición corta, para que el desvanecido sea
+   cine y no parpadeo. */
 .of-label{font-family:var(--cond);font-size:10px;font-weight:700;letter-spacing:.14em;
   text-transform:uppercase;color:var(--muted2);pointer-events:none;white-space:nowrap;
-  padding:2px 6px 3px;border-radius:7px;background:rgba(7,10,8,.62);
-  box-shadow:0 3px 10px rgba(0,0,0,.35)}
+  padding:3px 7px 4px;border-radius:8px;
+  background:rgba(8,13,22,.66);border:1px solid rgba(255,255,255,.09);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  box-shadow:0 4px 14px rgba(0,0,0,.4);
+  transition:opacity .35s ease}
 .of-label i{display:block;font-style:normal;font-size:8.5px;font-weight:400;
   letter-spacing:.06em;color:var(--muted);opacity:.85}
 .of-label{border-left:3px solid #d9a441}
@@ -159,10 +162,13 @@
 .of-label[data-estado="ok"]{border-left-color:#4f9d69}
 .of-label[data-estado="error"]{border-left-color:#d94141}
 .of-label[data-estado="reposo"]{border-left-color:#8a8a8a}
-/* El cartel de la pared identifica el medio y contrasta sobre el muro. */
+/* El cartel del núcleo: colimador central. Flota sobre la esfera holográfica,
+   así que su aro es cian y respira con la luz del núcleo. */
 .of-cartel{text-align:center;pointer-events:none;max-width:170px;
-  padding:4px 9px 5px;border-radius:9px;border:1px solid rgba(255,255,255,.13);
-  background:rgba(7,10,8,.82);box-shadow:0 6px 18px rgba(0,0,0,.45)}
+  padding:5px 10px 6px;border-radius:10px;
+  border:1px solid rgba(34,211,238,.26);
+  background:rgba(7,12,20,.78);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+  box-shadow:0 0 26px rgba(34,211,238,.14), 0 6px 18px rgba(0,0,0,.45)}
 .of-cartel b{display:block;font-family:var(--cond);font-size:15px;font-weight:700;
   letter-spacing:.18em;text-transform:uppercase;color:var(--txt);line-height:1.15}
 .of-cartel i{display:block;font-style:normal;font-size:10px;letter-spacing:.08em;
@@ -170,7 +176,7 @@
 .of-globo{max-width:190px;padding:5px 9px;border-radius:10px;border:1px solid var(--line);
   background:rgba(7,10,8,.86);color:var(--txt);font-size:10.5px;line-height:1.35;
   pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  box-shadow:0 6px 18px rgba(0,0,0,.45)}
+  box-shadow:0 6px 18px rgba(0,0,0,.45);transition:opacity .35s ease}
 .of-globo b{font-family:var(--cond);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
   display:block;color:var(--muted2);margin-bottom:1px}
 .of-globo.curso{border-color:rgba(47,122,209,.65);color:#d7eaff}
