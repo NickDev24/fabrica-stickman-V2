@@ -57,21 +57,63 @@ NEGATIVOS = ("comic panel, thick ink border, black ink, warm white paper, red ac
              "no watermark, no typography")
 
 
+# expresión por rol rítmico: el beat emocional se lee en la cara del stickman
+# cuando el plano es lo suficientemente cercano como para verla.
+EXPRESION_POR_ROL = {
+    "gancho": "sorprendido",
+    "giro": "sorprendido",
+    "cliffhanger": "asustado",
+    "remate": "neutra",
+    "escala": "piensa",
+    "contexto": "neutra",
+    "silencio": "neutra",
+}
+
 def prompt_panel(panel: dict, ficha: dict | None, idx: int = 0) -> str:
-    """IDENTIDAD(personaje) + luz de rol + escena del beat + plano + composición + negativos."""
-    guia = (ficha or {}).get("guia", "silueta negra con contorno blanco grueso")
-    plano_en = PLANOS_EN.get(str(panel.get("plano", "medio")), "medium shot")
+    """IDENTIDAD(personaje) + luz de rol + escena del beat + plano + composición + negativos.
+
+    La cara expresiva aparece SÓLO en planos cercanos (primer_plano/detalle):
+    el contrato del canal (personaje.json v9) define identidad_cara para eso.
+    En planos anchos se mantiene la silueta estricta (identidad del canal).
+    """
+    # personajes.json del episodio solo trae la guia de silueta; el contrato
+    # de identidad expresiva vive en state/estilo/personaje.json (v9).
+    if not (isinstance(ficha, dict) and ficha.get("identidad_cara")):
+        try:
+            import json as _json
+            from pathlib import Path as _P
+            estilo = _json.loads((_P("state/estilo/personaje.json")).read_text(encoding="utf-8"))
+            if isinstance(estilo, dict):
+                ficha = {**(ficha or {}), **estilo}
+        except (OSError, ValueError):
+            pass
+    plano = str(panel.get("plano", "medio"))
+    if plano in ("primer_plano", "detalle") and isinstance(ficha, dict) and ficha.get("identidad_cara"):
+        guia = ficha.get("identidad_cara")
+        rol = str(panel.get("rol_ritmico", "contexto"))
+        expresion = (ficha.get("expresiones") or {}).get(
+            EXPRESION_POR_ROL.get(rol, "neutra"), "attentive calm face")
+        guia = f"{guia}, {expresion}"
+    else:
+        guia = (ficha or {}).get("guia", "solid black stickman silhouette, round head, no face, thick white outline, slim limbs")
+    plano_en = PLANOS_EN.get(plano, "medium shot")
     rol = str(panel.get("rol_ritmico", "contexto"))
     luz = LUZ_ROL.get(rol, LUZ_ROL["contexto"])
     # escena del beat: ancla LITERAL del guion (contexto), narración (acción visible)
     escena = (str(panel.get("ancla_guion", "")).strip()
               or str(panel.get("narracion", "")).strip())
     composit = COMPOSICION[idx % len(COMPOSICION)]
+    # Humor negro de encuadre: los roles de quiebre llevan un micro-gesto
+    # corporal que refuerza el remate sin introducir hechos nuevos.
+    humor = ""
+    if rol in ("gancho", "giro", "remate", "cliffhanger"):
+        humor = "subtle comedic timing, slight ironic body language"
     partes = [guia, "stickman noir style, thick expressive ink linework, graphic novel art",
               f"lighting: {luz}",
               plano_en,
               f"scene: {_recorta(escena, 180)}",
               composit,
+              humor,
               "single panel illustration",
               NEGATIVOS]
     return ", ".join(p for p in partes if p)
