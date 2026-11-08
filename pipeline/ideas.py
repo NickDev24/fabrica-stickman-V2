@@ -25,7 +25,8 @@ from .episode import Episode
 STATE_IDEAS = config.STATE / "ideas.json"
 REGISTRO = config.REGISTRY / "ideas.jsonl"
 
-CAMPOS = ["titulo", "gancho", "desarrollo", "giro", "cierre", "cta", "duracion_s"]
+CAMPOS = ["titulo", "gancho", "desarrollo", "giro", "cierre", "cta", "duracion_s",
+          "emocion", "miniatura"]
 
 
 def _obligatorios(card: dict) -> list[str]:
@@ -74,6 +75,8 @@ def proponer(tema: str, categoria: str, formato_clave: str, senal: dict | None =
         ' "giro": "la revelacion que reordena todo lo anterior",\n'
         ' "cierre": "frase final memorable",\n'
         ' "cta": "invitation natural, nunca suscribite ya",\n'
+        ' "emocion": "emocion universal dominante (venganza, miedo, amor, traicion, injusticia, ambicion, supervivencia, humor o curiosidad) — una sola",\n'
+        ' "miniatura": "concepto de portada en una frase: que pregunta o conflicto vende (no describir la animacion)",\n'
         ' "preguntas_abiertas": "que hay que verificar si es cierto o no (lista de 3 a 6 preguntas concretas)"}\n\n'
         "PROHIBIDO: inventar investigaciones, cifras, experimentos o descubrimientos; imitar "
         "titulos de otros canales; afirmar algo que no se pueda verificar. Las preguntas_abiertas "

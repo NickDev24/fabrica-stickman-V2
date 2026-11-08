@@ -111,6 +111,15 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
     if not any(str(p.get("rol_ritmico", "")) == "gancho" for p in paneles):
         problemas.append("sin viñeta con rol_ritmico='gancho': falta el cold open")
 
+    # Ritmo: silencio de descompresión (evita fatiga) + giro/cliffhanger (twist).
+    roles = {str(p.get("rol_ritmico", "")) for p in paneles}
+    if "silencio" not in roles:
+        problemas.append("sin viñeta 'silencio': falta descompresión (fatiga de lectura)")
+    if not (roles & {"giro", "cliffhanger"}):
+        problemas.append("sin giro/cliffhanger: el capítulo no reordena la expectativa")
+    if len(roles) < 4:
+        problemas.append(f"solo {len(roles)} roles distintos (<4): ritmo monótono")
+
     # footer de fuentes POR PÁGINA (retención también es credibilidad)
     fuentes_por_pag: dict[int, int] = defaultdict(int)
     for p in paneles:
