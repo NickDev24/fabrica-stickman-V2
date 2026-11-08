@@ -103,7 +103,7 @@ async function init() {
   $$(".rail-item").forEach((b) => b.onclick = () => cambiarVista(b.dataset.vista));
   const quiet = new URLSearchParams(location.search).has("quiet");
   const h = location.hash.slice(1);
-  if (["inicio", "video", "comics", "metricas", "conectores", "agentes", "oficina3d", "transmision"].includes(h)) {
+  if (["inicio", "video", "comics", "metricas", "conectores", "oficina3d"].includes(h)) {
     cambiarVista(h);
   }
   $("#btn-rail").onclick = () => $("#rail").classList.toggle("abierto");
@@ -147,7 +147,6 @@ async function refrescar() {
   await Promise.all([refrescarEstado(), refrescarGaleria()]);
   if (S.vista === "metricas") await refrescarMetricas();
   if (S.vista === "conectores") await refrescarConectores();
-  if (S.vista === "agentes") await refrescarAgentes();
   pintar();
 }
 
@@ -187,7 +186,6 @@ function pintar() {
   if (S.vista === "comics") pintarComics();
   if (S.vista === "metricas") pintarMetricasView();
   if (S.vista === "conectores") pintarConectores();
-  if (S.vista === "agentes") pintarAgentes();
 }
 
 /* ─────────────────────────── datos derivados ─────────────────────────── */

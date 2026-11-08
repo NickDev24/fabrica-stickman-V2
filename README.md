@@ -16,12 +16,17 @@
 ## ✨ Qué hace
 
 - **Fábrica de Video:** descubre temas, escribe guion, genera keyframes (IA), narra con TTS,
-  monta el video máster (9:16) y deriva YouTube Short + Facebook Reel, publica vía Zernio.
-- **Fábrica de Cómics:** convierte guiones en capítulos con viñetas y portadas.
-- **Panel web (Mission Control):** cinta de producción en vivo, galería, métricas YT/FB,
-  conectores MCP, agentes del pipeline, transmisión en vivo por WebSocket.
+  monta el video máster (9:16) con cama musical sintetizada (sin copyright) y deriva
+  YouTube Short + Facebook Reel, publica vía Zernio.
+- **Fábrica de Cómics:** convierte guiones en capítulos con viñetas, portadas y QC duro
+  (paneles negros, captions duplicados, ritmo, cold open). Personajes con cara expresiva
+  en primeros planos.
+- **Panel web (Mission Control):** cinta de producción en vivo, galería, métricas YT/FB
+  (vía Zernio), conectores MCP, Oficina 3D (carrusel 3D de agentes).
 - **Reciclado inteligente de imágenes:** consume caché antes de pedir nuevas (≈ mitad de costo).
 - **Publicación autónoma diaria** con gates de QC, título y flag sintético como cinturón de seguridad.
+- **Identidad visual viral:** emoción universal + miniatura (packaging) + hook de 3 segundos
+  en cada idea; ritmo Ki-Sho-Ten-Ketsu en cómics.
 
 ## 🚀 Instalación (primera vez)
 
@@ -90,20 +95,19 @@ Vistas del riel lateral:
 | Inicio | Banner de fábrica, feed de últimos episodios y capítulos |
 | Fábrica de Video | Cinta de producción (10 estaciones), galería, keyframes, métricas |
 | Fábrica de Cómics | Prensa de tinta, galería de capítulos, viñetas |
-| Métricas | Publicación YT/FB, interacción por día, emoción, seguidores |
+| Métricas | Publicación YT/FB (vía Zernio), interacción por día, emoción, seguidores |
 | Conectores MCP | Zernio, YouTube, Facebook, Telegram, LLM + registrar nuevos |
-| Agentes del Pipeline | Habilidades, editor de prompt, reinstalación |
-| Transmisión en vivo | Log crudo vía WebSocket |
+| Oficina 3D | Central de operaciones: carrusel 3D de estaciones por agente (giro auto, drag, foco) |
 
 Screenshots:
 
 | Inicio | Fábrica de Video |
 |---|---|
 | ![Inicio](assets/docs/dashboard-inicio.png) | ![Video](assets/docs/dashboard-fabrica-video.png) |
-| **Cómics** | **Métricas** |
-| ![Cómics](assets/docs/dashboard-fabrica-comics.png) | ![Métricas](assets/docs/dashboard-metricas.png) |
-| **Conectores** | **Agentes** |
-| ![Conectores](assets/docs/dashboard-conectores.png) | ![Agentes](assets/docs/dashboard-agentes.png) |
+| **Cómics** | **Oficina 3D** |
+| ![Cómics](assets/docs/dashboard-fabrica-comics.png) | ![Oficina 3D](assets/docs/dashboard-oficina3d.png) |
+| **Métricas** | **Conectores** |
+| ![Métricas](assets/docs/dashboard-metricas.png) | ![Conectores](assets/docs/dashboard-conectores.png) |
 
 ---
 

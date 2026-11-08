@@ -33,9 +33,7 @@
     <button class="rail-item" data-vista="comics">📚 <span>Fábrica de Cómics</span></button>
     <button class="rail-item" data-vista="metricas">📈 <span>Métricas</span></button>
     <button class="rail-item" data-vista="conectores">🔌 <span>Conectores MCP</span></button>
-    <button class="rail-item" data-vista="agentes">🤖 <span>Agentes del Pipeline</span></button>
     <button class="rail-item" data-vista="oficina3d">🏢 <span>Oficina 3D</span></button>
-    <button class="rail-item" data-vista="transmision">🖥 <span>Transmisión en vivo</span></button>
     <div class="rail-estado">
       <span id="rail-modo" class="rchip">—</span>
       <div id="rail-ep" class="ree-p">—</div>
@@ -269,37 +267,6 @@
       </div>
     </section>
 
-    <!-- ────── AGENTES / PIPELINE ────── -->
-    <section id="vista-agentes" class="vista" hidden>
-      <div class="seccion">
-        <div class="hf-cab" style="margin-bottom:14px;">
-          <h2 class="sec-tit">Agentes autónomos del pipeline</h2>
-          <p class="cm-det" style="margin:0;">Cada función del pipeline es un agente autónomo. Desde acá se instalan plugins/habilidades y se modifican los prompts de cada parte para que el sistema mejore solo con el tiempo.</p>
-        </div>
-        <div id="agentes-lista" class="agentes-grid"></div>
-      </div>
-
-      <div class="seccion">
-        <h2 class="sec-tit">Editor de prompt por agente</h2>
-        <p class="cm-det" style="margin:0 0 10px;">Seleccioná un agente para editar su prompt/sistema. Los cambios se persisten y la fábrica los usa en la próxima corrida.</p>
-        <div style="display:grid; grid-template-columns: 260px 1fr; gap:14px; align-items:start;">
-          <div>
-            <div style="font:600 12px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3); margin-bottom:8px;">Agente</div>
-            <div id="agente-sel-lista" style="display:flex; flex-direction:column; gap:6px;"></div>
-          </div>
-          <div style="background:var(--tarjeta); border:1px solid var(--borde); border-radius:var(--radio); padding:14px 16px; box-shadow:var(--sombra-sm); display:flex; flex-direction:column; gap:10px;">
-            <div style="font:600 12px var(--mono); text-transform:uppercase; letter-spacing:.08em; color:var(--tinta-3);">Prompt del sistema</div>
-            <textarea id="agente-prompt" rows="10" style="width:100%; font:12.5px/1.5 var(--mono); background:#060912; color:var(--tinta); border:1px solid var(--borde-suave); border-radius:8px; padding:10px; resize:vertical;"></textarea>
-            <div class="btn-group" style="margin-top:6px;">
-              <button id="btn-guarda-prompt" class="btn primary small">💾 Guardar prompt</button>
-              <button id="btn-reinstala-habilidad" class="btn outline small">🔌 Reinstalar habilidad</button>
-            </div>
-            <div id="agente-msg" style="font:500 12px var(--sans); color:var(--tinta-2); min-height:16px;"></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ────── OFICINA 3D ────── -->
     <section id="vista-oficina3d" class="vista" hidden>
       <div class="seccion">
@@ -318,14 +285,7 @@
       </div>
     </section>
 
-    <!-- ────── TRANSMISIÓN EN VIVO ────── -->
-    <section id="vista-transmision" class="vista" hidden>
-      <h2 class="sec-tit">Transmisión en vivo de la fábrica
-        <span class="log-tools"><label><input type="checkbox" id="log-autoscroll" checked> auto-scroll</label></span>
-      </h2>
-      <div id="terminal" class="terminal"></div>
-    </section>
-  </main>
+      </main>
 </div>
 
 <!-- lightbox -->
