@@ -17,12 +17,17 @@ Reglas duras:
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 
 from ..episode import Episode
 
 NARRACION_MAX = 120
+# Presupuesto de palabras del caption (regla del QC: "no se lee de un vistazo").
+# Vive acá para que adaptar y qc compartan el mismo número: antes el QC lo tenía
+# hardcodeado y el adaptar no lo aplicaba, así que el book quedaba bloqueado.
+NARRACION_MAX_PALABRAS = int(os.environ.get("COMICS_CAPTIONS_MAX_PALABRAS", "18"))
 MIN_BEATS = 13            # oraciones mínimas para sostener 15 viñetas con ritmo
 MAX_BEATS = 18            # techo de beats por capítulo -> 20 viñetas con ritmo
 VINETAS_MIN = 15
@@ -116,6 +121,61 @@ def _recorte(texto: str, limite: int) -> str:
     if puntos:
         return corte[:puntos[-1]].strip()
     return corte.rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def _recorte_palabras(texto: str, maximo: int) -> str:
+    """Recorta por presupuesto de palabras, preferiendo frases completas.
+
+    1) oraciones completas que entren; 2) cláusulas separadas por , : ; que entren;
+    3) corte en palabra con '…'. Nunca deja una cláusula a mitad sin marcar.
+    """
+    limpio = re.sub(r"\s+", " ", texto or "").strip()
+    if len(limpio.split()) <= maximo:
+        return limpio
+    for sep in (r"(?<=[.!?])\s+", r"(?<=[:,;])\s+"):
+        partes = re.split(sep, limpio)
+        acc, n = [], 0
+        for parte in partes:
+            w = len(parte.split())
+            if n + w > maximo:
+                break
+            acc.append(parte)
+            n += w
+        if acc:
+            return " ".join(acc).rstrip(",;:")
+    return " ".join(limpio.split()[:maximo]).rstrip(",;:") + "…"
+
+
+def _aplicar_presupuesto(paneles: list[dict], maximo: int = NARRACION_MAX_PALABRAS) -> int:
+    """Deja cada caption (base + encuadre) dentro del presupuesto de palabras del QC.
+
+    El encuadre `[...]` es parte del diseño y entra completo: si la suma supera el
+    cupo, primero se prueba con un encuadre más corto del mismo rol y sólo después
+    se recorta la base. Devuelve cuántas viñetas se ajustaron.
+    """
+    ajustadas = 0
+    for p in paneles:
+        narr = re.sub(r"\s+", " ", str(p.get("narracion") or "")).strip()
+        if len(narr.split()) <= maximo:
+            continue
+        m = re.match(r"^(?P<base>.*?)\s*\[(?P<encuadre>[^\]]*)\]\s*$", narr, re.S)
+        if not m:
+            p["narracion"] = _recorte_palabras(narr, maximo)
+            ajustadas += 1
+            continue
+        base, encuadre = m.group("base"), m.group("encuadre")
+        rol = str(p.get("rol_ritmico") or "")
+        pool = ENCUADRES.get(rol) or []
+        alternativa = next((e for e in sorted(pool, key=lambda x: len(x.split()))
+                            if len(f"{base} [{e}]".split()) <= maximo), None)
+        if alternativa:
+            p["narracion"] = f"{base} [{alternativa}]"
+            ajustadas += 1
+            continue
+        sobran = len(narr.split()) - maximo
+        p["narracion"] = f"{_recorte_palabras(base, max(1, len(base.split()) - sobran))} [{encuadre}]"
+        ajustadas += 1
+    return ajustadas
 
 
 def _fijo(pool: tuple[str, ...], k: int) -> str:
@@ -338,6 +398,9 @@ def adaptar(ep: Episode, *, forzar: bool = False) -> dict:
     vacias = [p["i"] for p in datos["paneles"] if not str(p.get("narracion", "")).strip()]
     if vacias:
         raise SystemExit(f"comics: viñetas sin narración ({vacias}) — no se publica a ciegas")
+    # Presupuesto de palabras del QC: sin esto el book queda bloqueado aunque el
+    # caption sea bueno (medido 2026-11-10: robo-gardner-13-obras, viñetas 8 y 13).
+    _aplicar_presupuesto(datos["paneles"])
     datos["procedencia"] = {"adaptado_el": time.strftime("%Y-%m-%d %H:%M:%S"),
                             "via": "determinista",
                             "via_captions": resumen_captions.get("via", "determinista"),

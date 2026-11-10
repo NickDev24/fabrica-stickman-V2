@@ -14,11 +14,12 @@ import pytest
 from PIL import Image
 
 from pipeline.comics.adaptar_guion import (
-    MAX_BEATS, MIN_BEATS, NARRACION_MAX, VINETAS_MIN,
-    _agrupar, _determinista, _grillas_para, _oraciones, _asignar_ritmo,
+    MAX_BEATS, MIN_BEATS, NARRACION_MAX, NARRACION_MAX_PALABRAS, VINETAS_MIN,
+    _agrupar, _aplicar_presupuesto, _determinista, _grillas_para, _oraciones,
+    _asignar_ritmo, _recorte_palabras,
 )
 from pipeline.comics.componer import PAG_H, PAG_W, componer
-from pipeline.comics.qc import ejecutar as qc_ejecutar
+from pipeline.comics.qc import _es_panel_negro, ejecutar as qc_ejecutar
 
 GUIION = """# El robo del museo
 
@@ -209,3 +210,53 @@ def test_qc_v2_exige_fuentes_en_toda_pagina(tmp_path: Path):
             p["claim_idx"] = None
     problemas = qc_ejecutar(ep, d, [], {})
     assert any("página 1: sin fuentes verificadas" in p for p in problemas)
+
+
+# ------------------------------------------- presupuesto de palabras del caption
+def test_recorte_palabras_prefiere_clausulas_completas():
+    texto = "Las fuentes públicas confirman la fecha, el disfraz policial, el total de obras"
+    assert _recorte_palabras(texto, 13) == texto
+    assert _recorte_palabras(texto, 9) == "Las fuentes públicas confirman la fecha, el disfraz policial"
+
+
+def test_aplicar_presupuesto_recorta_el_caption():
+    paneles = [{"i": 1, "rol_ritmico": "contexto",
+                "narracion": "Las fuentes públicas confirman la fecha, el disfraz policial, "
+                             "el total de obras y que el caso sigue abierto."}]
+    ajustadas = _aplicar_presupuesto(paneles)
+    assert ajustadas == 1
+    assert len(paneles[0]["narracion"].split()) <= NARRACION_MAX_PALABRAS
+
+
+def test_aplicar_presupuesto_elige_encuadre_mas_corto():
+    """El encuadre entra completo: si la suma supera el cupo, se prueba con otro más
+    corto del mismo rol antes de recortar la base (caso real: viñeta 8 de Gardner)."""
+    paneles = [{"i": 8, "rol_ritmico": "cliffhanger",
+                "narracion": "La pérdida se estima en más de 500 millones de dólares. "
+                             "[Lo que vino después no estaba en el libreto de nadie.]"}]
+    assert len(paneles[0]["narracion"].split()) > NARRACION_MAX_PALABRAS
+    _aplicar_presupuesto(paneles)
+    assert len(paneles[0]["narracion"].split()) <= NARRACION_MAX_PALABRAS
+    assert paneles[0]["narracion"].startswith("La pérdida se estima")
+    assert paneles[0]["narracion"].endswith("]")
+
+
+def test_el_adaptador_deja_los_captions_dentro_del_presupuesto():
+    """Sin esto el QC bloquea el book por un caption que el adaptar podía recortar."""
+    d = _determinista(_oraciones(GUIION), CLAIMS, "El robo del museo")
+    _asignar_ritmo(d["paneles"], d["grillas"])
+    _aplicar_presupuesto(d["paneles"])
+    for p in d["paneles"]:
+        if str(p.get("narracion", "")).strip():
+            assert len(p["narracion"].split()) <= NARRACION_MAX_PALABRAS, \
+                f"viñeta {p['i']}: {len(p['narracion'].split())} palabras"
+
+
+def test_es_panel_negro_con_pillow_13(tmp_path: Path):
+    """Pillow 13 ya no permite rebanar getdata(): el QC reventaba con TypeError."""
+    negro = tmp_path / "negro.png"
+    blanco = tmp_path / "blanco.png"
+    Image.new("L", (120, 120), 0).save(negro)
+    Image.new("L", (120, 120), 255).save(blanco)
+    assert _es_panel_negro(negro) is True
+    assert _es_panel_negro(blanco) is False

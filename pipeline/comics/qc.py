@@ -12,7 +12,7 @@ Chequeos (FABRICA-DE-COMICS.md, orden del dueño 2026-11-06):
   - páginas 1080x1620, chapter_vertical y carrusel 1 imagen por página,
   - personajes declarados en personajes.json.
   - (NUEVO 2026-11-08) sin paneles negros (error de render), sin captions
-    duplicados, <=18 palabras por glosa, cold open con rol 'gancho'.
+    duplicados, <= NARRACION_MAX_PALABRAS palabras por glosa, cold open con rol 'gancho'.
 El reporte va a comics/qc.json y NO bloquea nunca el pipeline de video.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 from PIL import Image
 
 from ..episode import Episode
-from .adaptar_guion import NARRACION_MAX, VINETAS_MIN
+from .adaptar_guion import NARRACION_MAX, NARRACION_MAX_PALABRAS, VINETAS_MIN
 
 IMAG_TAM_MIN = 8000
 PAG_TAM = (1080, 1620)
@@ -37,17 +37,29 @@ def _normalizar(texto: str) -> str:
 
 
 def _es_panel_negro(ruta: Path) -> bool:
-    """True si la imagen es casi totalmente negra (error de render)."""
+    """True si la imagen es casi totalmente negra (error de render).
+
+    Pillow 13 ya no permite rebanar `getdata()` (devuelve un `ImagingCore`, no una
+    lista): antes el QC reventaba con `TypeError: sequence index must be integer`
+    y dejaba el cómic sin publicar. Se materializa la lista y se muestrea.
+    """
     try:
         with Image.open(ruta) as im:
             im = im.convert("L")
             # muestreo para no leer 1 MB entero por viñeta
-            px = list(im.getdata()[::max(1, im.size[0] * im.size[1] // 2000)])
+            # get_flattened_data es el reemplazo de getdata en Pillow 13+ (sin
+            # deprecation warning); getdata queda como fallback para Pillow <13.
+            if hasattr(im, "get_flattened_data"):
+                datos = list(im.get_flattened_data())
+            else:
+                datos = list(im.getdata())
+            paso = max(1, im.size[0] * im.size[1] // 2000)
+            px = datos[::paso]
             if not px:
                 return False
             media = sum(px) / len(px)
             return media < NEGRO_UMBRAL
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return False
 
 
@@ -84,8 +96,11 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
         elif len(narr) > NARRACION_MAX:
             problemas.append(f"viñeta {i}: narración {len(narr)} chars (> {NARRACION_MAX})")
         # Presupuesto de palabras: una glosa que no se lee de un vistazo no retiene.
-        if narr.strip() and len(narr.split()) > 18:
-            problemas.append(f"viñeta {i}: {len(narr.split())} palabras (>18) — no se lee de un vistazo")
+        # El mismo número lo aplica `adaptar_guion._aplicar_presupuesto`: si no, el
+        # book queda bloqueado por un caption que el adaptar podría haber recortado.
+        if narr.strip() and len(narr.split()) > NARRACION_MAX_PALABRAS:
+            problemas.append(f"viñeta {i}: {len(narr.split())} palabras "
+                             f"(>{NARRACION_MAX_PALABRAS}) — no se lee de un vistazo")
         if rol != "silencio":
             ancla = str(p.get("ancla_guion", "") or "").strip()
             if not ancla:

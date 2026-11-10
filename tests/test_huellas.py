@@ -64,6 +64,13 @@ def test_sondas_viejas_sin_marca_tampoco_bloquean(tmp_path, monkeypatch):
     assert huellas.ya_contada(TITULO)[0] is False
 
 
+def test_un_esqueleto_sin_etapas_no_bloquea_la_repeticion(tmp_path, monkeypatch):
+    # Corte de cuota: la carpeta de producción quedó vacía (todo pending) → se reintenta.
+    projects = _preparar(tmp_path, monkeypatch)
+    _proyecto(projects, _estado("clayface-film", TITULO))
+    assert huellas.ya_contada(TITULO)[0] is False
+
+
 def test_un_episodio_producido_sigue_bloqueando_la_repeticion(tmp_path, monkeypatch):
     projects = _preparar(tmp_path, monkeypatch)
     datos = _estado("clayface-film", TITULO)

@@ -119,12 +119,19 @@ def test_tag_se_traduce_a_tarea_de_config():
     assert config.tarea_para_tag("nada_conocido") == "default"
 
 
-def test_gemini_solo_encabeza_tareas_premium(monkeypatch):
+def test_gemini_encabeza_el_texto_con_el_tope_diario_de_freno(monkeypatch):
+    """Cambio de política 2026-11-08 (decisión del dueño): Gemini deja de ser premium.
+
+    Con Cloudflare sin cuota y Ollama local sin modelos útiles, limitar Gemini a "guion"
+    dejaba la fábrica sin ningún proveedor que terminara una idea. Ahora encabeza las
+    tareas de texto y el freno es un tope DIARIO en dólares (0,50 USD), no la tarea:
+    al agotarse, llm.gasto_gemini_permitido devuelve False y la ruta sigue gratis.
+    """
     for k in ("ALLOW_REMOTE_LLM", "ALLOW_PAID_LLM", "ALLOW_AIONLABS"):
         monkeypatch.setenv(k, "1")
-    assert llm.ruta_de("guion")[0] == "gemini"
-    for barata in ("investigacion", "prompts_visuales", "direccion", "default"):
-        assert "gemini" not in llm.ruta_de(barata), barata
+    for tarea in ("guion", "investigacion", "prompts_visuales", "direccion", "default"):
+        assert llm.ruta_de(tarea)[0] == "gemini", tarea
+        assert "cloudflare" in llm.ruta_de(tarea), tarea
 
 
 def test_verificacion_no_usa_el_mismo_proveedor_que_el_guion(monkeypatch):

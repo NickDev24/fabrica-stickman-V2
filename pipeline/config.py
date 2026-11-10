@@ -14,13 +14,23 @@ FFMPEG_PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
 FFMPEG_CRF = int(os.environ.get("FFMPEG_CRF", "23"))
 
 # Piper reemplazó a VibeVoice como motor de narración (medido: 22,5 s para 45 s de audio).
-PIPER_BIN = Path.home() / "piper-env" / "bin" / "piper"
+# El binario de casa sólo existe en el host: dentro del contenedor se usa el wrapper del
+# repo (docker/factory/piper), que corre piper-tts con el python de la imagen. Sin esto la
+# narración moría con FileNotFoundError tras un guion ya aprobado (medido 2026-11-08).
+_PIPER_WRAPPER = ROOT / "docker" / "factory" / "piper"
+PIPER_BIN = Path(os.environ.get("PIPER_BIN") or (
+    _PIPER_WRAPPER if _PIPER_WRAPPER.exists() else Path.home() / "piper-env" / "bin" / "piper"))
 # Voz CapCut-like (Microsoft neural): la canónica la declara factory/audio/voice_config.json.
 # Antes estaba hardcodeado acá, así que cambiar de voz implicaba editar código; ahora el env
 # sigue mandando y, si no hay env, manda el config (única fuente del número).
 _CANONICA = parametros.voz_canonica()
 _ENGINE, _, _VOICE_REF = _CANONICA.partition(":")
-EDGE_TTS_BIN = Path(os.environ.get("EDGE_TTS_BIN", str(Path.home() / ".local" / "bin" / "edge-tts")))
+# Igual que Piper: el binario de casa no existe en el contenedor; el wrapper del repo sí
+# (usa edge-tts instalado en /app/vendor/edge).
+_EDGE_WRAPPER = ROOT / "docker" / "factory" / "edge-tts"
+EDGE_TTS_BIN = Path(os.environ.get("EDGE_TTS_BIN") or (
+    str(_EDGE_WRAPPER) if _EDGE_WRAPPER.exists()
+    else str(Path.home() / ".local" / "bin" / "edge-tts")))
 EDGE_TTS_VOICE = os.environ.get("EDGE_TTS_VOICE",
                                 _VOICE_REF if _ENGINE == "edge-tts" else "es-AR-TomasNeural")
 VOZ_PREFERIDA = os.environ.get("VOZ_PREFERIDA", _CANONICA)
@@ -119,7 +129,10 @@ PROVIDERS = {
         "params": {"reasoning_effort": os.environ.get("GEMINI_REASONING_EFFORT", "low")},
         "precio_in_usd_mtok": float(os.environ.get("GEMINI_INPUT_USD_MTOK", "0.75")),
         "precio_out_usd_mtok": float(os.environ.get("GEMINI_OUTPUT_USD_MTOK", "3.75")),
-        "presupuesto_usd_mes": float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.50")),
+        # El freno que manda es el DIARIO (decisión del dueño 2026-11-08: 0,50 USD/día).
+        # El mensual queda como techo de seguridad de 30 días, no como el límite real.
+        "presupuesto_usd_dia": float(os.environ.get("GEMINI_PRESUPUESTO_USD_DIA", "0.50")),
+        "presupuesto_usd_mes": float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "15.00")),
     },
     # Fallback local sin costo. Usa modelos que ya están instalados en Ollama;
     # no descarga modelos ni llama a Ollama Cloud.
@@ -165,19 +178,24 @@ def cloudflare_cfg() -> dict:
 # Reparto por tarea: verificación con un proveedor INDEPENDIENTE del que escribió (misión §3).
 # La ruta es la única fuente de orden; las banderas de entorno sólo DECIDEN SI UN NOMBRE
 # DEL LISTADO EXISTE (ver llm._habilitado): sin ALLOW_REMOTE_LLM los de nube se descartan
-# y queda el local; Gemini sólo aparece si ALLOW_PAID_LLM=1 y la tarea es premium.
+# y queda el local; Gemini sólo existe si ALLOW_PAID_LLM=1, y su gasto lo corta el tope
+# diario en dólares (no la tarea: eso fue lo que dejó 91 llamadas sin freno el 2026-11-05).
 TASK_ROUTES = {
-    # Cloudflare Workers AI (llama-3.1-8b) es el proveedor gratis VIVO hoy; bedrock
-    # tiene la key rechazada (401) y ollama local se cuelga por timeout. Por eso
-    # cloudflare va primero en TODAS las tareas. Bedrock queda fuera hasta que se
-    # repare la key (BADROCK_API_KEY) — si se arregla, re-agregarlo a "guion".
-    "default": ["cloudflare", "ollama"],
-    "investigacion": ["cloudflare", "ollama"],
-    "guion": ["cloudflare", "ollama"],
-    "verificacion": ["cloudflare", "ollama"],
-    "direccion": ["cloudflare", "ollama"],
-    "prompts_visuales": ["cloudflare", "ollama"],
-    "evaluacion": ["cloudflare", "ollama"],
+    # 2026-11-08: Cloudflare Workers AI quedó sin cuota (10.000 neuronas/día) y Ollama
+    # local sólo tiene modelos de 1.5B que no terminan un guion. Gemini pasa a encabezar
+    # las tareas de texto, con el tope DIARIO de 0,50 USD como freno (llm.gasto_gemini_
+    # permitido): al agotarse NO se llama a Gemini y la ruta sigue gratis. Los dos
+    # gratis quedan detrás como respaldo, así el día no se termina cuando se acaba el saldo.
+    "default": ["gemini", "cloudflare", "ollama"],
+    "investigacion": ["gemini", "cloudflare", "ollama"],
+    "guion": ["gemini", "cloudflare", "ollama"],
+    # Misión §3: el que verifica no puede ser el que escribió. Cloudflare (gratis e
+    # independiente) va primero; Gemini entra sólo si no hay otro con cuota, y el aviso
+    # queda impreso y en state/llm_log.jsonl para que el gate 1 no se lea como perfecto.
+    "verificacion": ["cloudflare", "gemini", "ollama"],
+    "direccion": ["gemini", "cloudflare", "ollama"],
+    "prompts_visuales": ["gemini", "cloudflare", "ollama"],
+    "evaluacion": ["gemini", "cloudflare", "ollama"],
 }
 
 # Cada etapa se identifica con un `tag` (es lo que llega a llm.chat en la práctica). Esta

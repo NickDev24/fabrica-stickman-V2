@@ -83,19 +83,22 @@ def intentadas() -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
         # `projects/idea-*` son SONDAS de verificación creadas por ideas.verificar(), no
-        # episodios producidos. Contarlas como "ya intentadas" hacía que una idea recién
-        # verificada se descartara a sí misma (la sonda lleva su mismo título, huella 1.0)
-        # y la fábrica quedaba en un bucle verificar -> descartar sin producir nunca.
-        # Las sondas FALLIDAS se conservan para no reincidir en un tema sin fuentes; las
-        # verificadas no bloquean nada.
-        if dato.get("verificacion_probe"):
-            if str(dato.get("verificacion_estado") or "").strip().lower() == "verificada":
+        # episodios producidos. Una sonda VERIFICADA bloqueaba su propia idea (mismo título,
+        # huella 1.0) y la fábrica quedaba en verificar -> descartar sin producir nunca.
+        # Sólo las sondas con veredicto FALLIDO conservan el anti-reintento; las verificadas
+        # y las que no llegaron a escribir veredicto (SIGTERM, re-verificación interrumpida)
+        # no bloquean: la sonda se reescribe entera en la próxima verificación.
+        es_sonda = ruta.parent.name.startswith("idea-") or bool(dato.get("verificacion_probe"))
+        if es_sonda:
+            veredicto = str(dato.get("verificacion_estado") or "").strip().lower()
+            if veredicto not in ("descartada_sin_fuentes", "verificacion_insuficiente"):
                 continue
-        elif ruta.parent.name.startswith("idea-") and not any(
-                str(v).strip().lower() not in ("", "pending")
-                for v in (dato.get("stage_status") or {}).values()):
-            # Sondas anteriores a la marca: nunca avanzaron ninguna etapa.
-            continue
+        else:
+            # Esqueleto de producción que nunca avanzó una etapa (corte de cuota, red,
+            # SIGTERM): no es una historia contada y no puede vetar su propia idea.
+            etapas = (dato.get("stage_status") or {}).values()
+            if etapas and all(str(v).strip().lower() in ("", "pending") for v in etapas):
+                continue
         texto = " ".join(str(dato.get(clave) or "") for clave in ("title", "historia", "categoria"))
         out.append({"slug": ruta.parent.name, "huella": huella(texto)})
     return out

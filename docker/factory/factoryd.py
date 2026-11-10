@@ -85,6 +85,8 @@ estado = {
     "ep": None,
     "ep_inicio": 0.0,
     "episodios_hoy": 0,
+    "dia": time.strftime("%Y-%m-%d"),
+    "descartes": 0,
     "arranque": time.time(),
     "ultima_salida": None,
     "fallas": 0,
@@ -186,6 +188,12 @@ def episodios() -> list[dict]:
             dat = json.loads(meta.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        # Las carpetas `idea-*` son SONDAS de verificación (ideas.verificar), no episodios
+        # producidos: inflaban el archivo, la galería y las estadísticas del panel. Las
+        # sondas viejas no llevan la marca `verificacion_probe`, así que también se filtra
+        # por nombre (una producción nunca se llamó `idea-*`).
+        if dat.get("verificacion_probe") or d.name.startswith("idea-"):
+            continue
         lista.append({"slug": dat.get("slug", d.name), "titulo": dat.get("title", ""),
                       "categoria": dat.get("categoria", ""),
                       "stages": dat.get("stage_status", {}),
@@ -276,9 +284,21 @@ async def bucle_247() -> None:
     await emitir({"t": "status", "modo": estado["modo"]})
     try:
         while estado["modo"] == "corriendo":
+            # El contador del panel es "hoy", no "desde que arrancó el contenedor".
+            hoy = time.strftime("%Y-%m-%d")
+            if estado.get("dia") != hoy:
+                estado["dia"] = hoy
+                estado["episodios_hoy"] = 0
             cmd = ["/usr/local/bin/python", "-m", "pipeline.run", "auto"]
             if not PUBLISH:
                 cmd.append("--no-publicar")
+            # Reciclado de la biblioteca (imagenoteca + caché) habilitado por defecto
+            # (pedido del dueño 2026-11-10): antes la fábrica 24/7 no pasaba la flag,
+            # así que las imágenes generadas por otra IA y las ya producidas nunca
+            # se reutilizaban. Se puede apagar con KF_RECLICAR_BIBLIOTECA=0.
+            if os.environ.get("KF_RECLICAR_BIBLIOTECA", "1").strip().lower() \
+                    not in ("0", "false", "no", "off"):
+                cmd.append("--reciclar-imagenes")
             salto: asyncio.Event = ciclo["salto"]
             salto.clear()
             corredor = asyncio.ensure_future(correr_proceso(cmd))
@@ -305,13 +325,30 @@ async def bucle_247() -> None:
             if rc == 0:
                 estado["episodios_hoy"] += 1
                 estado["fallas"] = 0
+            elif rc == 2:
+                # GATE: la idea elegida no daba para un episodio (fuentes, título, QC viral).
+                # Es un rechazo honesto, no una falla del motor: se cuenta aparte y NO se
+                # aplica el backoff de 15 min — la próxima idea verificada corre enseguida.
+                estado["descartes"] += 1
+                estado["fallas"] = 0
             else:
                 estado["fallas"] += 1
             await emitir({"t": "ep_fin", "ep": slug, "rc": rc, "total": total,
                           "metrics": metrics})
+            if rc != 0:
+                # La corrida no dejó un episodio en producción: el panel no debe seguir
+                # mostrando el anterior como "PRODUCIENDO" indefinidamente.
+                estado["ep"] = None
             guardar_ctrl()
             if estado["modo"] != "corriendo":
                 break
+            if rc == 2:
+                await emitir({"t": "status", "modo": "corriendo",
+                              "msg": "idea descartada por gate: sigo con la próxima"})
+                await asyncio.sleep(COOLDOWN_S)
+                if estado["modo"] != "corriendo":
+                    break
+                continue
             if rc != 0:
                 # sin ideas nuevas verificadas o fallo duro: backoff y reintento, sin spam
                 pausa = BACKOFF_IDEAS_S if estado["fallas"] >= 2 else 60
@@ -336,6 +373,7 @@ async def api_estado(req: web.Request) -> web.Response:
                               "ep_inicio": estado["ep_inicio"],
                               "uptime_s": int(time.time() - estado["arranque"]),
                               "episodios_hoy": estado["episodios_hoy"],
+                              "descartes": estado["descartes"],
                               "ultima_salida": estado["ultima_salida"],
                               "publish": PUBLISH,
                               "sys": metricas_sistema(),
@@ -680,13 +718,15 @@ def _leer_metricas() -> dict:
 
 async def api_oficina(req: web.Request) -> web.Response:
     """Estado de los agentes del pipeline para la Oficina 3D (vivo)."""
+    # (id, nombre, stage_key, rol, faena_en_curso) — la Oficina 3D lee rol/faena para el
+    # rótulo de cada estación; sin ellos mostraba el rol vacío.
     agentes_def = [
-        ("research", "Descubrimiento", "research"),
-        ("guion", "Guionista", "guion"),
-        ("visuales", "Dirección de arte", "visuales"),
-        ("narracion", "Narrador", "narracion"),
-        ("montaje", "Montajista", "montaje"),
-        ("publicacion", "Publicador", "publicacion"),
+        ("research", "Descubrimiento", "research", "Investigación", "rastreando fuentes"),
+        ("guion", "Guionista", "guion", "Guion", "escribiendo el guion"),
+        ("visuales", "Dirección de arte", "visuales", "Arte", "componiendo keyframes"),
+        ("narracion", "Narrador", "narracion", "Voz", "narrando el episodio"),
+        ("montaje", "Montajista", "montaje", "Montaje", "armando el máster"),
+        ("publicacion", "Publicador", "publicacion", "Publicación", "publicando YT + FB"),
     ]
     slug = estado.get("ep")
     stages = {}
@@ -698,7 +738,7 @@ async def api_oficina(req: web.Request) -> web.Response:
             stages = {}
     corriendo = estado.get("modo") == "corriendo"
     out = []
-    for aid, nombre, stage_key in agentes_def:
+    for aid, nombre, stage_key, rol, faena in agentes_def:
         val = stages.get(stage_key, "pending")
         if val in ("done", "gate_pass"):
             estado_ag = "ok"
@@ -717,8 +757,10 @@ async def api_oficina(req: web.Request) -> web.Response:
         if corriendo and val == "pending":
             # determinar stage activo: el primer pending en orden
             pass
-        out.append({"id": aid, "nombre": nombre, "estado": estado_ag,
-                    "en_curso": en_curso, "ultima": {"ok": val in ("done", "gate_pass"),
+        out.append({"id": aid, "nombre": nombre, "rol": rol,
+                    "faena": faena if en_curso else "",
+                    "estado": estado_ag, "en_curso": en_curso,
+                    "ultima": {"ok": val in ("done", "gate_pass"),
                     "perdido": False, "d": str(val)}})
     # marcar el stage activo (primer pending) como trabajando si la fábrica corre
     if corriendo:
@@ -726,13 +768,15 @@ async def api_oficina(req: web.Request) -> web.Response:
         stage_map = {"research": "research", "guion": "guion", "visuales": "visuales",
                      "narracion": "narracion", "montaje": "montaje", "publicacion": "publicacion"}
         activo = None
-        for aid, nombre, sk in agentes_def:
+        for aid, nombre, sk, rol, faena in agentes_def:
             if stages.get(sk, "pending") not in ("done", "gate_pass"):
                 activo = aid; break
         if activo:
             for a in out:
                 if a["id"] == activo:
                     a["estado"] = "curso"; a["en_curso"] = True
+                    activo_faena = next(f for i, _n, _s, _r, f in agentes_def if i == activo)
+                    a["faena"] = activo_faena
     return web.json_response({"agentes": out})
 
 async def api_metricas(req: web.Request) -> web.Response:

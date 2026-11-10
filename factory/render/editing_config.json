@@ -81,10 +81,10 @@
     "estado_real": "se generan sfx-*.wav por beat (projects/*/assets/audio/sfx, ~34 archivos en pre-insight-3anos). Falta la regla de DOSIS: hoy no hay tope medido."
   },
   "texto_en_pantalla": {
-    "subtitulos": "desactivados: ningún subtítulo se incrusta en los renders de la fábrica",
+    "subtitulos": "activados: subtítulos dinámicos quemados por beat en el máster keyframe (ASS, libass). Desactivable con KF_SUBTITULOS=0.",
     "pop_de_palabra_clave": {
-      "estado_actual": "desactivado; el render final se entrega sin texto sincronizado",
-      "accion": "reactivar",
+      "estado_actual": "activo: se resalta 1 palabra clave/cifra por beat (color énfasis) dentro del subtítulo dinámico",
+      "accion": "mantener y ajustar cobertura/estilo según retención",
       "palabras_max": 2,
       "caracteres_max": 14,
       "duracion_s": [
@@ -109,8 +109,8 @@
     "ampliacion": "aplicar la misma lógica en el corte final: los primeros 3 s deben llevar el flash-forward CON el POP de la palabra clave y la música cortada, no sólo la imagen."
   },
   "wiring": {
-    "estado_actual": "configuración documental; el render de producción no quema subtítulos",
-    "punto_de_carga_1": "pipeline/stages/keyframes.py: cámara y montaje sin subtítulos; pipeline/stages/montaje.py no incorpora texto narrado",
+    "estado_actual": "subtítulos dinámicos cableados en pipeline/stages/keyframes.py (_generar_subtitulos_ass + filtro ass en el render final)",
+    "punto_de_carga_1": "pipeline/stages/keyframes.py: _generar_subtitulos_ass genera artifacts/subtitulos.ass y el master lo quema con -vf ass (KF_SUBTITULOS=0 lo desactiva)",
     "punto_de_carga_2": "pipeline/config.py para el 16:9 del episodio",
     "punto_de_carga_3": "factory/motor/gestor_audio.py y pipeline/stages/keyframes.py:314 para niveles/ducking/LUFS"
   },

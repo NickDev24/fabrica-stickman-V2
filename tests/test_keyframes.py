@@ -196,3 +196,70 @@ def test_el_piso_de_zoom_deja_holgura_para_oscilar():
     assert piso > 1.0
     holgura_s = K.H * (1 - 1 / piso) / 2
     assert holgura_s >= K.RESPIRACION_PX, f"holgura {holgura_s:.1f}px < deriva {K.RESPIRACION_PX}px"
+
+
+# --------------------------------------------------------------- reutilización
+class _Ep:
+    def __init__(self, d: Path):
+        self.dir = d
+
+
+def _beat(i: int, escena: str, accion: str, plano: str, texto: str, idea: str) -> dict:
+    return {"i": i, "escena": escena, "accion": accion, "plano": plano, "mov": "pan",
+            "dur_s": 4.0, "texto": texto, "direccion": {"idea": idea}}
+
+
+def _preparar(tmp_path, monkeypatch, beats):
+    """Corre _preparar_keyframes con el generador de imágenes simulado (sin red)."""
+    llamadas: list[str] = []
+
+    def falso_generar(prompt, salida, **kw):
+        salida.parent.mkdir(parents=True, exist_ok=True)
+        salida.write_bytes(b"x" * 9000)
+        llamadas.append(prompt)
+        return salida
+
+    monkeypatch.setattr(K.imagen, "generar", falso_generar)
+    ep = _Ep(tmp_path)
+    bs, info = K._preparar_keyframes(ep, [dict(b) for b in beats], modelo="flux")
+    return bs, info, llamadas
+
+
+def test_beat_distinta_toma_no_reutiliza_la_imagen_anterior(tmp_path, monkeypatch):
+    """Mismo escenario pero otra toma/contenido: copiar la imagen repetiría una
+    ilustración que no corresponde a lo narrado (reportado por el dueño)."""
+    beats = [
+        _beat(0, "galeria", "senala", "medio", "El museo amanece con trece marcos vacíos",
+              "marcos vacíos | beat: museo"),
+        _beat(1, "galeria", "camina", "general", "Dos hombres entraron por la puerta de servicio",
+              "puerta de servicio | beat: entrada"),
+    ]
+    _bs, info, llamadas = _preparar(tmp_path, monkeypatch, beats)
+    assert len(llamadas) == 2, "la segunda escena debió generar imagen nueva"
+    assert info["reciclados"] == 0
+
+
+def test_misma_toma_reutiliza_la_imagen_anterior(tmp_path, monkeypatch):
+    """Misma escena+acción+plano: la imagen sirve para los dos beats (ahorro 24/7)."""
+    beats = [
+        _beat(0, "galeria", "senala", "medio", "El museo amanece con trece marcos vacíos",
+              "marcos vacíos | beat: museo"),
+        _beat(1, "galeria", "senala", "medio", "Los marcos siguen vacíos a la mañana siguiente",
+              "marcos vacíos | beat: museo"),
+    ]
+    _bs, info, llamadas = _preparar(tmp_path, monkeypatch, beats)
+    assert len(llamadas) == 1, "la misma toma debió reutilizar la imagen"
+    assert info["reciclados"] == 1
+
+
+def test_la_narracion_casi_identica_reutiliza_aunque_cambie_la_toma(tmp_path, monkeypatch):
+    """Si la idea es la misma, la imagen representa igual al beat aunque el plano mude."""
+    beats = [
+        _beat(0, "galeria", "senala", "medio", "El museo amanece con trece marcos vacíos",
+              "marcos vacíos | beat: museo"),
+        _beat(1, "galeria", "mira", "primer_plano", "El museo amanece con trece marcos vacíos",
+              "marcos vacíos | beat: museo"),
+    ]
+    _bs, info, llamadas = _preparar(tmp_path, monkeypatch, beats)
+    assert len(llamadas) == 1, "misma idea y narración: debió reutilizar"
+    assert info["reciclados"] == 1

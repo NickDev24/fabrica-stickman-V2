@@ -29,6 +29,10 @@ from . import config, llm
 
 CACHE = config.STATE / "imagen_cache"
 IMAGENOTECA = config.ROOT / "assets" / "imagenoteca"
+# Carpeta de ingesta: el dueño deja acá imágenes generadas por OTRA IA para que la
+# fábrica las indexe y las recicle por coincidencia semántica. No se borran los
+# originales: la imagenoteca es una copia por SHA-256 (idempotente).
+INGESTA = config.ROOT / "assets" / "ingesta"
 ESTILO = config.STATE / "estilo" / "personaje.json"
 
 # perfil por modelo: cómo se pasan los parámetros y cómo viene la respuesta
@@ -172,6 +176,19 @@ def _webp_a_jpg(crudos: bytes) -> bytes:
     return buf.getvalue()
 
 
+NEGATIVO_ESTILO = ("photorealistic, realistic skin, human portrait, photograph, 3d render, "
+                   "cgi, detailed anatomy, shading, gradients, text, letters, watermark, logo")
+
+
+def _espera_de_limite(texto: str) -> float | None:
+    """Segundos que pide el proveedor en un 402/429 ("every 45 seconds"), si los dice."""
+    m = re.search(r"every\s+(\d+)\s*(?:seconds|second|s\b)", texto, re.I)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"retry[- _]after[:\s]+(\d+)", texto, re.I)
+    return float(m.group(1)) if m else None
+
+
 def _crudos_pollinations(prompt: str, w: int, h: int, seed: int) -> bytes:
     """GET directo; sin key funciona anónimo (~1 req / 15 s). Con sk_ SIN SALDO (402)
     el mismo proveedor cae a modo anónimo en lugar de bloquear el keyframe."""
@@ -180,8 +197,12 @@ def _crudos_pollinations(prompt: str, w: int, h: int, seed: int) -> bytes:
     config.load_env()
     base = os.environ.get("POLLINATIONS_URL",
                            "https://image.pollinations.ai/prompt").rstrip("/")
+    # enhance=false es CLAVE: con enhance activo Pollinations reescribe el prompt con un
+    # LLM y devuelve retratos semirrealistas, perdiendo el stickman del canal (visto
+    # 2026-11-08). negative_prompt mantiene fuera piel, 3D y fotografía.
     qs = {"model": os.environ.get("POLLINATIONS_IMAGEN_MODEL", "flux"),
-          "width": w, "height": h, "seed": seed, "nologo": "true"}
+          "width": w, "height": h, "seed": seed, "nologo": "true",
+          "enhance": "false", "negative_prompt": NEGATIVO_ESTILO}
     key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
     headers = {"User-Agent": "pulso-curioso-fabrica/1.0"}
 
@@ -205,8 +226,10 @@ def _crudos_pollinations(prompt: str, w: int, h: int, seed: int) -> bytes:
             error_con_key = str(exc)
             print(f"  pollinations: con POLLINATIONS_API_KEY falló ({error_con_key[:110]}); "
                   "reintento anónimo")
-    # cadencia anónima: ~1 pedido cada POLLINATIONS_MIN_INTERVAL_S
-    intervalo = max(1.0, float(os.environ.get("POLLINATIONS_MIN_INTERVAL_S", "16")))
+    # Cadencia anónima real: el cupo gratis es 1 imagen cada 45 s por IP (HTTP 402
+    # FREE_LIMIT). Con 16 s cada pedido rebotaba y la cascada caía a imágenes pagas
+    # (medido 2026-11-08: 0,22 USD quemados en keyframes que debían ser gratis).
+    intervalo = max(1.0, float(os.environ.get("POLLINATIONS_MIN_INTERVAL_S", "45")))
     uso = config.STATE / "pollinations_usage.json"
     try:
         ultimo = float(json.loads(uso.read_text(encoding="utf-8")).get("ultimo_ts", 0.0))
@@ -218,12 +241,24 @@ def _crudos_pollinations(prompt: str, w: int, h: int, seed: int) -> bytes:
     uso.parent.mkdir(parents=True, exist_ok=True)
     uso.write_text(json.dumps({"ultimo_ts": time.time(), "intervalo_s": intervalo}),
                    encoding="utf-8")
-    try:
-        return pedir(qs)
-    except RuntimeError as exc:
-        if error_con_key:
-            raise RuntimeError(f"con key: {error_con_key} | anónimo: {exc}") from exc
-        raise
+    # Si el proveedor igual contesta "FREE_LIMIT ... every N seconds", se espera lo que
+    # pide en vez de gastar el respaldo pago: el keyframe sale gratis, sólo más lento.
+    reintentos = max(0, int(os.environ.get("POLLINATIONS_REINTENTOS", "3")))
+    for intento in range(reintentos + 1):
+        try:
+            return pedir(qs)
+        except RuntimeError as exc:
+            espera = _espera_de_limite(str(exc))
+            if espera is None or intento == reintentos:
+                if error_con_key:
+                    raise RuntimeError(f"con key: {error_con_key} | anónimo: {exc}") from exc
+                raise
+            print(f"  pollinations: cupo gratis tocado; espero {espera:.0f} s y reintento "
+                  f"({intento + 1}/{reintentos})")
+            time.sleep(espera + 1)
+            uso.write_text(json.dumps({"ultimo_ts": time.time(), "intervalo_s": intervalo}),
+                           encoding="utf-8")
+    raise RuntimeError("pollinations: reintentos agotados")
 
 
 def _crudos_hf_space(prompt: str, w: int, h: int, seed: int, steps: int | None) -> bytes:
@@ -275,12 +310,11 @@ def _crudos_cloudflare(modelo: str, prompt: str, w: int, h: int, seed: int,
 def _crudos_gemini(prompt: str) -> bytes:
     """Último recurso pagado: presupuesto mensual pega, gasto registrado por imagen."""
     cfg = MODELOS["gemini-imagen"]
-    cap = float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.5"))
-    gasto = llm._gasto_gemini()
-    if gasto + cfg["precio_usd"] > cap:
-        raise RuntimeError(
-            f"imagen gemini: presupuesto mensual agotado "
-            f"({gasto:.2f} USD tope {cap:.2f} USD)")
+    # La imagen sale del MISMO tope diario que el texto (0,50 USD/día): si ya se gastó,
+    # la cascada sigue con los motores gratis en vez de reventar el presupuesto del día.
+    permitido, motivo = llm.gasto_gemini_permitido(cfg["precio_usd"])
+    if not permitido:
+        raise RuntimeError(f"imagen gemini: {motivo}")
     body_payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
                     "generationConfig": {"responseModalities": ["IMAGE"]}}
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -291,6 +325,7 @@ def _crudos_gemini(prompt: str) -> bytes:
                            json=body_payload)
     if rr.status_code != 200:
         raise RuntimeError(f"imagen gemini falló: HTTP {rr.status_code} {rr.text[:200]}")
+    _anotar_imagen(cfg["precio_usd"])
     raw_b64 = None
     for c in rr.json().get("candidates", []):
         for p in (c.get("content") or {}).get("parts", []):
@@ -354,14 +389,27 @@ def huella(modelo: str, prompt: str, w: int, h: int, seed: int, steps: int | Non
     # redrawaría el mismo personaje, gastando free tier y cambiando la cara.
     cfg = MODELOS[modelo]
     extras = cfg["params"](w, h, steps, seed)
+    # El modelo real de Pollinations vive en una env (flux/turbo). Sin esto en la clave,
+    # cambiar de modelo devolvía la imagen vieja de la caché y parecía que no servía
+    # (2026-11-08: flux devolvía retratos en vez de stickman y no había forma de reintentar).
+    # Ojo: flux/dreamshaper/sdxl pueden terminar servidos por Pollinations (es eslabón de
+    # su cadena), así que su sub-modelo también entra en la clave: sin esto, cambiar
+    # flux->turbo seguía devolviendo los retratos guardados en caché (2026-11-08).
+    if modelo == "pollinations" or "pollinations" in CADENA.get(modelo, []):
+        extras["pollinations_model"] = os.environ.get("POLLINATIONS_IMAGEN_MODEL", "flux")
     semilla = json.dumps([cfg["nombre"], prompt, sorted(extras.items())],
                          ensure_ascii=False)
     return hashlib.sha256(semilla.encode("utf-8")).hexdigest()[:40]
 
 
 def _archivar(img: Path, *, prompt: str = "", modelo: str = "", escena: str = "",
-              accion: str = "", plano: str = "", origen: str = "") -> Path:
-    """Persiste una imagen lista para buscar y reciclar en assets/imagenoteca."""
+              accion: str = "", plano: str = "", origen: str = "",
+              personaje: str = "", **extra) -> Path:
+    """Persiste una imagen lista para buscar y reciclar en assets/imagenoteca.
+
+    El sidecar se reescribe mergesando con el previo: así una re-corrida no pierde
+    tags/personaje que el dueño haya agregado a mano, pero sí actualiza el prompt.
+    """
     import shutil
     if not img.is_file() or img.stat().st_size < 8_000:
         return img
@@ -371,13 +419,112 @@ def _archivar(img: Path, *, prompt: str = "", modelo: str = "", escena: str = ""
     if not destino.exists():
         shutil.copy2(img, destino)
     sidecar = destino.with_suffix(".json")
-    if not sidecar.exists():
-        sidecar.write_text(json.dumps({
-            "archivo": destino.name, "sha256": digest, "prompt": prompt,
-            "modelo": modelo, "escena": escena, "accion": accion, "plano": plano,
-            "origen": origen, "resolucion": None,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+    datos: dict = {
+        "archivo": destino.name, "sha256": digest, "prompt": prompt,
+        "modelo": modelo, "escena": escena, "accion": accion, "plano": plano,
+        "origen": origen, "resolucion": None,
+    }
+    if personaje:
+        datos["personaje"] = personaje
+    datos.update(extra)
+    if sidecar.exists():
+        try:
+            previo = json.loads(sidecar.read_text(encoding="utf-8"))
+            if isinstance(previo, dict):
+                for clave, valor in previo.items():
+                    datos.setdefault(clave, valor)
+        except (OSError, ValueError):
+            pass
+    sidecar.write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
     return destino
+
+
+def personaje_contrato() -> str:
+    """Personaje del canal según la hoja de estilo (state/estilo/personaje.json)."""
+    try:
+        return str(estilo().get("personaje") or "").strip()
+    except (OSError, ValueError, RuntimeError):
+        return ""
+
+
+def _sidecar_externo(img: Path) -> dict:
+    """Metadatos de una imagen externa: .json (prompt, escena, accion, plano, personaje,
+    tags) o .txt (sólo prompt). Sin ninguno no hay prompt y no se puede reciclar por
+    semántica — la fábrica no inventa la descripción de una imagen que no generó."""
+    json_path = img.with_suffix(".json")
+    if json_path.is_file():
+        try:
+            datos = json.loads(json_path.read_text(encoding="utf-8"))
+            if isinstance(datos, dict):
+                return datos
+        except (OSError, ValueError):
+            pass
+    txt_path = img.with_suffix(".txt")
+    if txt_path.is_file():
+        prompt = txt_path.read_text(encoding="utf-8").strip()
+        if prompt:
+            return {"prompt": prompt}
+    return {}
+
+
+def ingerir(carpeta: Path | None = None) -> dict:
+    """Incorpora a la imagenoteca imágenes generadas por OTRA IA (pedido del dueño).
+
+    Deja los originales en la carpeta de ingesta (no los borra) y es idempotente:
+    archiva por SHA-256. Para que la fábrica las encuentre por coincidencia semántica,
+    cada imagen necesita su prompt en un .json o .txt hermano:
+
+        assets/ingesta/mi-scene.png
+        assets/ingesta/mi-scene.json   -> {"prompt": "...", "escena": "galeria",
+                                          "accion": "senala", "plano": "medio",
+                                          "personaje": "4F", "tags": ["museo"]}
+
+    Sin prompt queda archivada pero no se recicla (se evita reutilizar una imagen
+    que no corresponde a la escena).
+    """
+    raiz = Path(carpeta) if carpeta else INGESTA
+    raiz.mkdir(parents=True, exist_ok=True)
+    from PIL import Image
+    archivos = sorted(p for p in raiz.iterdir()
+                      if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp") and p.is_file())
+    archivadas, sin_prompt, errores = 0, 0, []
+    for img in archivos:
+        if img.stat().st_size < 8_000:
+            errores.append(f"{img.name}: menos de 8 KB")
+            continue
+        try:
+            with Image.open(img) as im:
+                im.verify()
+        except (OSError, ValueError) as exc:
+            errores.append(f"{img.name}: no es imagen decodificable ({str(exc)[:60]})")
+            continue
+        meta = _sidecar_externo(img)
+        prompt = " ".join(str(meta.get("prompt") or "").split())
+        tags = meta.get("tags") or []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        tags = [str(t).strip() for t in tags if str(t).strip()]
+        if not prompt:
+            sin_prompt += 1
+        _archivar(img, prompt=prompt, modelo="externa",
+                  escena=str(meta.get("escena") or "").strip(),
+                  accion=str(meta.get("accion") or "").strip(),
+                  plano=str(meta.get("plano") or "").strip(),
+                  origen="externa",
+                  personaje=str(meta.get("personaje") or "").strip(),
+                  tags=tags)
+        archivadas += 1
+    # El índice de reciclaje vive cacheado en memoria: hay que reconstruirlo para
+    # que las imágenes recién ingresadas aparezcan en la próxima búsqueda.
+    try:
+        from .stages import reciclaje
+        reciclaje.invalidar_cache()
+    except Exception:  # noqa: BLE001 — el reciclaje es una mejora, no un requisito
+        pass
+    return {"carpeta": str(raiz), "imagenes": len(archivos), "archivadas": archivadas,
+            "sin_prompt": sin_prompt, "errores": errores[:10],
+            "nota": ("cada imagen necesita un .json o .txt con 'prompt' para la coincidencia "
+                     "semántica; sin prompt queda archivada pero no se recicla")}
 
 
 def importar_imagenes_existentes() -> dict:
@@ -407,13 +554,52 @@ def importar_imagenes_existentes() -> dict:
             "directorio": str(IMAGENOTECA.relative_to(config.ROOT))}
 
 
+def gasto_imagenes_hoy() -> float:
+    """USD gastados HOY en imágenes pagas (ledger propio, aparte del de texto)."""
+    from datetime import date
+    try:
+        d = json.loads((config.STATE / "gemini_imagenes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0.0
+    return float((d.get("dias") or {}).get(date.today().isoformat(), 0.0))
+
+
+def _anotar_imagen(usd: float) -> None:
+    from datetime import date
+    ruta = config.STATE / "gemini_imagenes.json"
+    try:
+        d = json.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    dias = d.setdefault("dias", {})
+    hoy = date.today().isoformat()
+    dias[hoy] = round(float(dias.get(hoy, 0.0)) + usd, 6)
+    for viejo in sorted(dias)[:-40]:
+        dias.pop(viejo, None)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _disponible_gemini() -> tuple[bool, str]:
-    """El opt-in pago es explícito: sin ALLOW_PAID_LLM=1 ni GEMINI_API_KEY, no."""
+    """Las imágenes son gratis primero, con un SUB-TOPE propio si hay que pagar.
+
+    Medido 2026-11-08: por un 402 de cupo gratis, la cascada compró ~0,36 USD de imágenes
+    que debían salir gratis y se comió el presupuesto del guion. Ahora hay dos frenos:
+    se espera la cadencia gratis en vez de facturar de entrada, y el gasto en imágenes
+    tiene su propio tope diario (GEMINI_IMAGENES_USD_DIA, 0,10 USD por defecto) para que
+    nunca vacíe el tope de 0,50 USD/día del canal.
+    """
     config.load_env()
     if os.environ.get("ALLOW_PAID_LLM", "").strip().lower() not in ("1", "true", "yes", "on"):
         return False, "ALLOW_PAID_LLM no habilitado (gemini-imagen es pago)"
     if not os.environ.get("GEMINI_API_KEY", "").strip():
         return False, "sin GEMINI_API_KEY en .env"
+    tope = float(os.environ.get("GEMINI_IMAGENES_USD_DIA", "0.10"))
+    gastado = gasto_imagenes_hoy()
+    precio = MODELOS["gemini-imagen"]["precio_usd"]
+    if gastado + precio > tope + 1e-9:
+        return False, (f"sub-tope de imágenes del día alcanzado "
+                       f"({gastado:.3f}/{tope:.2f} USD); siguen los gratis")
     return True, ""
 
 
@@ -471,7 +657,8 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
             salida.parent.mkdir(parents=True, exist_ok=True)
             salida.write_bytes(recs[0].read_bytes())
             _archivar(salida, prompt=prompt, modelo=modelo, escena=escena,
-                      accion=accion, plano=plano, origen="reciclaje:" + str(recs[0]))
+                      accion=accion, plano=plano, origen="reciclaje:" + str(recs[0]),
+                      personaje=personaje_contrato())
             return salida
     ext = extension(modelo)
     clave = CACHE / f"{huella_img}.{ext}"
@@ -486,7 +673,8 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
         salida.parent.mkdir(parents=True, exist_ok=True)
         salida.write_bytes(clave.read_bytes())
         _archivar(salida, prompt=prompt, modelo=modelo, escena=escena,
-                  accion=accion, plano=plano, origen="cache:" + str(clave))
+                  accion=accion, plano=plano, origen="cache:" + str(clave),
+                  personaje=personaje_contrato())
         return salida
     if forzar and clave.exists():
         clave.unlink()
@@ -529,7 +717,8 @@ def generar(prompt: str, salida: Path, *, modelo: str = "flux", w: int = 1024,
     salida.parent.mkdir(parents=True, exist_ok=True)
     salida.write_bytes(crudos)
     _archivar(salida, prompt=prompt, modelo=usado, escena=escena,
-              accion=accion, plano=plano, origen="generada")
+              accion=accion, plano=plano, origen="generada",
+              personaje=personaje_contrato())
     return salida
 
 
@@ -637,7 +826,10 @@ def armar_prompt_dirigido(beat: dict) -> str:
               f"{plano_txt}; {cam}",
               f"narrative focus: {foco}; visual object: {prop}; action: {acting}; reveal: {reveal}; motion: {movimiento}",
               f"story context: {contexto}" if contexto else "",
-              "black ink, warm white, red accent, absolutely no text, letters, numbers, captions, typography, labels, or watermark; blank uncluttered illustration; no extra limbs"]
+              "black ink, warm white, red accent, flat 2D cartoon sticker, solid fills, "
+              "simple shapes, no photorealism, no skin texture, no 3d, absolutely no text, "
+              "letters, numbers, captions, typography, labels, or watermark; blank "
+              "uncluttered illustration; no extra limbs"]
     out = ", ".join(p for p in partes if p)
     if len(out) > 600:
         out = out[:600].rsplit(" ", 1)[0]

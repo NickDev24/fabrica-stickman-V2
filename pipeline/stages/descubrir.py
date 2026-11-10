@@ -15,6 +15,7 @@ from urllib.parse import quote, quote_plus, unquote, urlparse
 import requests
 
 from .. import llm, web
+from ..gates import GateFailure
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 
@@ -249,10 +250,13 @@ def _viable(url: str) -> bool:
     return "html" in ctype or "text" in ctype or ctype == ""
 
 
-def descubrir(ep, historia: str, max_urls: int = 10) -> list[str]:
+def descubrir(ep, historia: str, max_urls: int = 10, consulta: str | None = None) -> list[str]:
     vistos: set[str] = set()
     candidatos: list[tuple[int, str, int]] = []
-    for q in _queries(historia, ep.slug):
+    # Se busca por el TEMA verificado (`consulta`), no por el título-gancho: el gancho
+    # puede ser una pregunta que no devuelve ni una fuente aunque el tema tenga diez.
+    texto = (consulta or "").strip() or historia
+    for q in _queries(texto, ep.slug):
         for u, titulo in _ddg(q) + _wikipedia(q) + _bing(q):
             u = u.split("#")[0]
             if u in vistos:
@@ -261,7 +265,7 @@ def descubrir(ep, historia: str, max_urls: int = 10) -> list[str]:
             host = urlparse(u).netloc
             if _basura(u, titulo):
                 continue
-            relevancia = _relevancia(q + " " + historia, titulo, u)
+            relevancia = _relevancia(q + " " + texto, titulo, u)
             score = 3 * relevancia + (2 if PRESTIGIO.search(host) else 1)
             if "wikipedia.org" in host:
                 score -= 1  # útil pero no cuenta como fuente primaria institucional
@@ -281,7 +285,7 @@ def descubrir(ep, historia: str, max_urls: int = 10) -> list[str]:
             if _basura(ru, rt or "referencia"):
                 continue
             host = urlparse(ru).netloc
-            relevancia = _relevancia(historia, rt or "", ru)
+            relevancia = _relevancia(texto, rt or "", ru)
             candidatos.append((3 * relevancia + (2 if PRESTIGIO.search(host) else 1),
                                ru, relevancia))
         expandidas += 1
@@ -314,8 +318,11 @@ def descubrir(ep, historia: str, max_urls: int = 10) -> list[str]:
         elegidas += _tomar([c for c in candidatos if c[2] < 1 and c[1] not in elegidas],
                            4 - len(elegidas))
     if len(elegidas) < 4:
-        raise SystemExit(f"descubrir: sólo {len(elegidas)} fuentes alcanzables para '{historia}'. "
-                         "El pipeline no publica con investigación insuficiente (gate 1).")
+        # Rechazo de gate, no una caída de infraestructura: rc=2 y la fábrica pasa a la
+        # siguiente idea en vez de reintentar la misma con backoff de 15 min.
+        raise GateFailure("fuentes", [
+            f"descubrir: sólo {len(elegidas)} fuentes alcanzables para '{texto}'. "
+            "El pipeline no publica con investigación insuficiente (gate 1)."])
     (ep.dir / "research" / "urls.txt").write_text(
         "# autodescubierto por pipeline/stages/descubrir.py\n" + "\n".join(elegidas) + "\n",
         encoding="utf-8")

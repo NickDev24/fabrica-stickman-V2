@@ -104,7 +104,59 @@ def _slugify(texto: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", re.sub(r"\s+", "-", texto.lower().strip()))[:60].strip("-")
 
 
-def _historia_del_dia() -> tuple[str, str]:
+def _carpeta_vacia(slug: str) -> bool:
+    """El proyecto existe pero NUNCA avanzó una etapa: esqueleto de un intento fallido.
+
+    Medido 2026-11-08: al agotarse la cuota de LLM, `auto` crea la carpeta del episodio y
+    muere en discovery. Esa carpeta vacía después vetaba la idea para siempre (`sin_contar`
+    la veía como "episodio ya existe" y `run_auto` se negaba a reutilizarla), así que cada
+    corte de cuota quemaba una idea ya verificada. Un esqueleto sin etapas no es un episodio.
+    """
+    d = config.PROJECTS / slug
+    if not d.exists():
+        return False
+    try:
+        estado = json.loads((d / "episode.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    etapas = (estado.get("stage_status") or {}).values()
+    return all(str(v).strip().lower() in ("", "pending") for v in etapas)
+
+
+def _descartar_idea(ep, motivo: str) -> None:
+    """El gate tumbó la idea elegida: se marca en state/ideas.json para que el próximo
+    ciclo elija otra.
+
+    Sin esto la ficha seguía en "verificada", la carpeta del episodio quedaba reutilizable
+    y la fábrica repetía la MISMA idea para siempre (medido 2026-11-08: "¿Qué le pasa a tu
+    cuerpo si jugás a La bola negra?" dio 0 fuentes alcanzables y volvió a empezar).
+    """
+    ruta = config.STATE / "ideas.json"
+    try:
+        crudo = json.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    lista = crudo if isinstance(crudo, list) else (crudo.get("ideas") or [])
+    quiero = _slugify(str(getattr(ep, "title", "") or ""))
+    tocada = False
+    for card in lista:
+        if not isinstance(card, dict):
+            continue
+        if _slugify(str(card.get("titulo") or "")) != quiero:
+            continue
+        card["estado"] = "descartada_gate"
+        card["motivo"] = motivo[:200]
+        tocada = True
+    if not tocada:
+        return
+    try:
+        ruta.write_text(json.dumps(crudo, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        return
+    print(f"  fábrica: idea descartada para no repetirla — {motivo[:110]}")
+
+
+def _historia_del_dia() -> tuple[str, str, str]:
     """Autonomía total: la fábrica se elige SOLA la idea del día.
 
     Orden: ranking existente en state/ideas.json (generado hoy por tendencias +
@@ -162,7 +214,7 @@ def _historia_del_dia() -> tuple[str, str]:
             # fábrica quedaría en un bucle de "episodio ya existe". Se descarta y se
             # pasa a la siguiente idea verificada (el proyecto previo queda intacto).
             posible = _slugify(str(candidata.get("titulo") or "").split(",")[0][:48])
-            if (config.PROJECTS / posible).exists():
+            if (config.PROJECTS / posible).exists() and not _carpeta_vacia(posible):
                 descartadas.append((texto[:60], posible, 1.0))
                 continue
             contada, slug_previo, similitud = huellas.ya_contada(texto)
@@ -210,17 +262,27 @@ def _historia_del_dia() -> tuple[str, str]:
     print(f"  fábrica: idea elegida por ella misma -> {titulo}")
     if categoria:
         print(f"  fábrica: nicho -> {categoria}")
-    return titulo, categoria
+    # Tercer valor = TEMA con el que se investiga. `ideas.verificar` probó justamente ese
+    # tema y encontró fuentes; buscar por el título-gancho devolvía 0 resultados y la idea
+    # verificada moría en producción (medido 2026-11-08 con "La bola negra": 10 fuentes
+    # por el tema, 0 por "¿Qué le pasa a tu cuerpo si jugás a La bola negra?").
+    tema = str(elegida.get("tema") or "").strip()
+    return titulo, categoria, tema
 
 
 def run_auto(args) -> None:
     historia = args.historia
     categoria_autonoma = ""
+    tema_autonomo = ""
     if not historia:
-        historia, categoria_autonoma = _historia_del_dia()
+        historia, categoria_autonoma, tema_autonomo = _historia_del_dia()
     slug = args.slug or _slugify(historia.split(",")[0][:48])
     if (config.PROJECTS / slug).exists():
-        raise SystemExit(f"el episodio {slug!r} ya existe; pasá --slug distinto o re-usable con sus comandos por etapa")
+        if not _carpeta_vacia(slug):
+            raise SystemExit(f"el episodio {slug!r} ya existe; pasá --slug distinto o re-usable con sus comandos por etapa")
+        # Un esqueleto sin ninguna etapa avanzada es un intento cortado (cuota, red):
+        # se reutiliza en vez de quemar la idea verificada para siempre.
+        print(f"  fábrica: {slug} quedó vacío en un intento anterior; reutilizo la carpeta")
     t0 = time.time()
     categoria = getattr(args, "categoria", "") or categoria_autonoma
     ep = Episode.create(slug, historia[0].upper() + historia[1:], categoria=categoria)
@@ -233,11 +295,32 @@ def run_auto(args) -> None:
         if not paquete.is_file():
             raise SystemExit(f"con --categoria falta el paquete curado {paquete.relative_to(config.ROOT)}")
         (ep.dir / "research" / "urls.txt").write_text(paquete.read_text(encoding="utf-8"), encoding="utf-8")
-    descubrir.descubrir(ep, historia) if not categoria_curada else print("  fuentes institucionales curadas preservadas")
-    research.research(ep)
-    research.factcheck(ep)
-    guion.guion(ep, args.angulo)
-    narracion.narrar(ep)
+    # La etapa en curso se marca si un gate la rechaza. Sin esto el rechazo no deja
+    # rastro en episode.json: la carpeta sigue "vacía", vuelve a ser reutilizable y la
+    # MISMA idea se reintenta para siempre (medido 2026-11-08 con "Clayface": gate 1 la
+    # rechazó por fuentes de un solo dominio y la fábrica la eligió otra vez).
+    etapa = "research"
+    try:
+        descubrir.descubrir(ep, historia, consulta=tema_autonomo or None) if not categoria_curada \
+            else print("  fuentes institucionales curadas preservadas")
+        research.research(ep)
+        research.factcheck(ep)
+        etapa = "guion"
+        guion.guion(ep, args.angulo)
+        etapa = "narracion"
+        narracion.narrar(ep)
+    except GateFailure as rechazo:
+        ep.set_stage(etapa, "gate_fail")
+        _descartar_idea(ep, str(rechazo))
+        raise
+    except SystemExit as corte:
+        # Los gates editoriales del guion cortan con SystemExit("GATE ..."); un
+        # SystemExit de infraestructura (Piper ausente, credenciales) NO es un rechazo
+        # y no debe quemar la idea.
+        if str(corte).startswith("GATE "):
+            ep.set_stage(etapa, "gate_fail")
+            _descartar_idea(ep, str(corte))
+        raise
     if args.motor != "keyframe":
         raise SystemExit("ruta de fotos reales deshabilitada: la fábrica produce con --motor keyframe "
                          "(stickman 4F). No se descargan imágenes de Wikimedia.")
@@ -341,6 +424,12 @@ def run_auto(args) -> None:
         raise
 
 
+def _correr_comics(ep: Episode, no_publicar: bool) -> None:
+    from pipeline.comics import ciclo
+    print(json.dumps(ciclo.producir(ep, publicar=not no_publicar),
+                     ensure_ascii=False, indent=2))
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="pipeline.run")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -360,6 +449,11 @@ def main(argv=None) -> int:
 
     sub.add_parser("escuchar-telegram",
                    help="long-polling: reacciona a los botones de revisión y a /aprobar /rechazar /estado /precio")
+    sp = sub.add_parser("ingerir",
+                        help="incorpora a la imagenoteca imágenes generadas por otra IA "
+                             "(assets/ingesta/ con .json/.txt de prompt)")
+    sp.add_argument("--carpeta", default=None,
+                    help="carpeta de ingesta (default: assets/ingesta)")
     sub.add_parser("medir",
                    help="trae la analítica REAL de cada post publicado (Zernio) a state/metricas.jsonl")
     sub.add_parser("aprender",
@@ -398,6 +492,12 @@ def main(argv=None) -> int:
             sp.add_argument("--reciclar-imagenes", action="store_true")
             sp.add_argument("--renovar-imagenes", nargs="*", type=int, default=[], metavar="BEAT")
     sp = sub.add_parser("guion"); sp.add_argument("slug"); sp.add_argument("--angulo")
+    sp = sub.add_parser("comics",
+                        help="produce el cómic del episodio (comics.v2) y, si el QC aprueba, "
+                             "publica el carrusel en Facebook")
+    sp.add_argument("slug")
+    sp.add_argument("--no-publicar", action="store_true",
+                    help="sólo produce y corre el QC; no publica en Facebook")
 
     args = p.parse_args(argv)
 
@@ -408,6 +508,12 @@ def main(argv=None) -> int:
             return 1
         try:
             run_auto(args)
+        except GateFailure as g:
+            # Un rechazo del gate no es una caída del motor: la idea no daba para un episodio.
+            # Se reporta con código 2 (rechazo) en vez de traceback, y factoryd descarta la
+            # idea y sigue con la próxima sin el backoff largo de los errores duros.
+            print(f"\nGATE {g.gate.upper()} BLOCKÓ EL EPISODIO:\n  " + "\n  ".join(g.reasons))
+            return 2
         finally:
             _soltar_lock_produccion()
         return 0
@@ -430,6 +536,12 @@ def main(argv=None) -> int:
 
     if args.cmd == "escuchar-telegram":
         tele_revision.escuchar()
+        return 0
+
+    if args.cmd == "ingerir":
+        from . import imagen
+        print(json.dumps(imagen.ingerir(Path(args.carpeta) if args.carpeta else None),
+                         ensure_ascii=False, indent=2))
         return 0
 
     if args.cmd == "nuevo":
@@ -465,6 +577,7 @@ def main(argv=None) -> int:
         "collage-render": lambda: collage.render(ep),
         "gates": lambda: print(run_all_gates(ep.dir)),
         "estado": lambda: print(ep.read_state()["stage_status"]),
+        "comics": lambda: _correr_comics(ep, bool(args.no_publicar)),
     }
     try:
         dispatch[args.cmd]()

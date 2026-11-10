@@ -148,9 +148,19 @@ def asegurar_titulo(ep: Episode, titulo: str, angulo: str) -> str:
             raise SystemExit(f"GATE TÍTULO BLOQUEA EL EPISODIO: {motivos[0]} "
                              f"(y no se pudo reescribir: {str(exc)[:70]})")
         vigente = nuevo.strip('"').splitlines()[0].strip() if nuevo else vigente
+    # La tercera reescritura puede haber quedado válida: se evalúa ANTES de rendirse.
+    # Antes se indexaba motivos[0] de un título que ya pasaba (lista vacía) → IndexError
+    # que mataba el episodio justo después de arreglar el título.
+    motivos = gates.gate_titulo(vigente, lo, hi)
+    if not motivos:
+        estado = ep.read_state()
+        if estado.get("title") != vigente:
+            estado["title"] = vigente
+            ep.write_state(estado)
+        print(f"  GATE TÍTULO: reparado tras reescrituras → {vigente!r} ({len(vigente)} caracteres)")
+        return vigente
     raise SystemExit(f"GATE TÍTULO BLOQUEA EL EPISODIO: tres reescrituras y ningún título pasó "
-                     f"{lo}-{hi} caracteres sin fórmula de lista "
-                     f"({gates.gate_titulo(vigente, lo, hi)[0]})")
+                     f"{lo}-{hi} caracteres sin fórmula de lista ({motivos[0]})")
 
 
 def _guion_en_dos_pasos(prompt: str, ep: Episode, lo_palabras: int, hi_palabras: int) -> str:

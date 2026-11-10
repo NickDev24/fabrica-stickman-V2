@@ -73,7 +73,7 @@ def health() -> dict:
             return {}
     # Sin corrida previa: estado por disponibilidad de key (sin llamar a la red).
     out = {}
-    for name in ("mistral", "qwen", "aionlabs", "bedrock", "cloudflare", "ollama"):
+    for name in ("mistral", "qwen", "aionlabs", "bedrock", "cloudflare", "gemini", "ollama"):
         out[name] = _key_available(name)
     return out
 
@@ -142,6 +142,46 @@ def _timeout_local(payload: dict) -> int:
     return int(max(45, min(config.LLM_LOCAL_TIMEOUT_S, segundos)))
 
 
+def _timeout_de(name: str, payload: dict) -> float:
+    """Tiempo por proveedor. Gemini respondió en 3-7 s, pero heredaba el techo de 300 s
+    (LLM_TIMEOUT_S) y tres reintentos de un pedido colgado paraban el ciclo 15 minutos
+    sin una línea en el log (medido 2026-11-08). Con GEMINI_TIMEOUT_S (120 s) el corte
+    se ve rápido y la ruta sigue.
+    """
+    if name == "ollama":
+        return _timeout_local(payload)
+    if name == "gemini":
+        return min(float(config.LLM_TIMEOUT_S),
+                   float(os.environ.get("GEMINI_TIMEOUT_S", "120")))
+    return float(config.LLM_TIMEOUT_S)
+
+
+def _en_espera(name: str) -> str:
+    """Enfriamiento tras un 429: no se vuelve a pedir hasta cumplir la ventana.
+
+    Un rate-limit por cuota diaria no se arregla reintentando (el 429 volvía a la misma
+    cuota muerta); el enfriamiento deja pasar al proveedor siguiente de forma barata.
+    Se configura con LLM_COOLDOWN_RATE_LIMIT_S (30 min por defecto).
+    """
+    try:
+        reg = (json.loads(HEALTH.read_text(encoding="utf-8")) or {}).get(name) or {}
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if reg.get("estado") != "rate_limit":
+        return ""
+    try:
+        visto = datetime.fromisoformat(str(reg.get("visto", "")).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if visto.tzinfo is None:
+        visto = visto.replace(tzinfo=timezone.utc)
+    ventana = float(os.environ.get("LLM_COOLDOWN_RATE_LIMIT_S", "1800"))
+    falta = ventana - (datetime.now(timezone.utc) - visto).total_seconds()
+    if falta <= 0:
+        return ""
+    return f"en espera por rate-limit ({int(falta // 60) + 1} min restantes)"
+
+
 def _post(url: str, payload: dict, headers: dict, name: str) -> tuple:
     """(Response|None, error). Reintenta SOLO fallos transitorios con backoff exponencial.
 
@@ -153,12 +193,17 @@ def _post(url: str, payload: dict, headers: dict, name: str) -> tuple:
                 max(1, int(getattr(config, "LLM_MAX_RETRIES_PER_PROVIDER", 1))))
     espera = float(getattr(config, "LLM_RETRY_BASE_S", 1.5))
     techo = float(getattr(config, "LLM_RETRY_MAX_S", 12.0))
+    en_espera = _en_espera(name)
+    if en_espera:
+        # Con un 429 hace un minuto no se vuelve a pedir: cada intento cuesta ~10 s de
+        # backoff y el día de hoy eso significó reintentar la misma cuota muerta cientos
+        # de veces por episodio, delante del proveedor que sí responde.
+        return None, en_espera
     ultimo = ""
     for n in range(intentos):
         retry_after = 0.0
+        timeout = _timeout_de(name, payload)
         try:
-            timeout = (_timeout_local(payload) if name == "ollama"
-                       else config.LLM_TIMEOUT_S)
             r = requests.post(url, json=payload, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
             ultimo = f"error de red: {exc.__class__.__name__}"
@@ -168,6 +213,9 @@ def _post(url: str, payload: dict, headers: dict, name: str) -> tuple:
                 _health_record(name, "lento", f"sin respuesta en {timeout}s ({ultimo})")
         else:
             if r.status_code < 400:
+                # Un proveedor que responde deja de estar en cuarentena (los 429 de la
+                # mañana no pueden bloquear la tarde).
+                _health_record(name, "ok", "respondió")
                 return r, ""
             ultimo = f"HTTP {r.status_code}: {r.text[:200]}"
             if r.status_code not in TRANSITORIOS:
@@ -254,35 +302,91 @@ def _iniciar_ollama_si_hace_falta() -> str:
     return "Ollama está instalado pero el servicio local no inició"
 
 
+def _budget() -> dict:
+    try:
+        return json.loads(config.GEMINI_BUDGET_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def _gasto_gemini() -> float:
     """USD gastados en el mes con el fallback pagado (estado/llm_budget.json)."""
-    try:
-        mes = time.strftime("%Y-%m")
-        d = json.loads(config.GEMINI_BUDGET_FILE.read_text(encoding="utf-8"))
-        return float(d.get(mes, {}).get("usd", 0.0))
-    except Exception:
-        return 0.0
+    return float((_budget().get(time.strftime("%Y-%m")) or {}).get("usd", 0.0))
+
+
+def gasto_gemini_hoy() -> float:
+    """USD gastados hoy (UTC) con Gemini: texto e imágenes contra el mismo ledger."""
+    dia = time.strftime("%Y-%m-%d")
+    return float(((_budget().get("dias") or {}).get(dia) or {}).get("usd", 0.0))
+
+
+def presupuesto_dia_gemini() -> float:
+    """Tope diario en USD. Es el freno real: se repone solo a las 00:00 UTC."""
+    cfg = config.PROVIDERS.get("gemini") or {}
+    return float(os.environ.get("GEMINI_PRESUPUESTO_USD_DIA",
+                                cfg.get("presupuesto_usd_dia", 0.50)))
+
+
+def gasto_gemini_permitido(estimado_usd: float = 0.0) -> tuple[bool, str]:
+    """¿Entra esta llamada en el tope del día (y en el del mes, si está puesto)?
+
+    Se consulta ANTES de cada pedido a Gemini: al agotarse el tope no se hace la llamada
+    (no se gasta de más) y la cascada sigue con los proveedores gratis. El tope diario
+    existe porque el mensual de 6 USD se agotó sin control el 2026-11-05 con 91 llamadas.
+    """
+    tope = presupuesto_dia_gemini()
+    gasto = gasto_gemini_hoy()
+    if tope <= 0:
+        return False, "tope diario de Gemini en 0 USD (Gemini desactivado por costo)"
+    if gasto + max(0.0, estimado_usd) > tope:
+        proyectado = f" + {estimado_usd:.3f} proyectado" if estimado_usd else ""
+        return False, (f"tope diario de Gemini alcanzado ({gasto:.3f} USD{proyectado} > "
+                       f"{tope:.2f} USD); sigue la ruta gratis")
+    cfg = config.PROVIDERS.get("gemini") or {}
+    tope_mes = float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES",
+                                    cfg.get("presupuesto_usd_mes", 0.0)) or 0.0)
+    if tope_mes > 0 and _gasto_gemini() + max(0.0, estimado_usd) > tope_mes:
+        return False, (f"tope mensual de Gemini alcanzado ({_gasto_gemini():.2f} USD > "
+                       f"{tope_mes:.2f} USD)")
+    return True, ""
+
+
+def _anotar_dia(data: dict, costo_usd: float, *, tin: int = 0, tout: int = 0,
+                imagen: bool = False) -> None:
+    """Suma el gasto al día UTC en curso y poda días viejos (40 alcanzan para auditar)."""
+    hoy = time.strftime("%Y-%m-%d")
+    dias = data.setdefault("dias", {})
+    prev = dias.get(hoy) or {}
+    dias[hoy] = {
+        "usd": round(float(prev.get("usd", 0.0)) + costo_usd, 6),
+        "llamadas": int(prev.get("llamadas", 0)) + (0 if imagen else 1),
+        "imagenes": int(prev.get("imagenes", 0)) + (1 if imagen else 0),
+        "tokens_in": int(prev.get("tokens_in", 0)) + tin,
+        "tokens_out": int(prev.get("tokens_out", 0)) + tout,
+    }
+    for viejo in sorted(dias)[:-40]:
+        dias.pop(viejo, None)
 
 
 def _registrar_gasto_gemini(cfg: dict, body: dict) -> None:
-    """Estima tokens y actualiza el ledger mensual; nunca lanza (el gasto ya ocurrió)."""
+    """Estima tokens y actualiza el ledger (mes y día); nunca lanza (el gasto ya ocurrió)."""
     try:
         usage = body.get("usage") or body.get("usageMetadata") or {}
         tin = int(usage.get("prompt_tokens") or usage.get("promptTokenCount") or 0)
         tout = int(usage.get("completion_tokens") or usage.get("candidatesTokenCount") or 0)
         costo = tin * cfg["precio_in_usd_mtok"] / 1e6 + tout * cfg["precio_out_usd_mtok"] / 1e6
         mes = time.strftime("%Y-%m")
-        saldo = {"usd": round(_gasto_gemini() + costo, 6),
-                 "llamadas": 0, "tokens_in": tin, "tokens_out": tout}
         p = config.GEMINI_BUDGET_FILE
-        data = {}
-        if p.exists():
-            data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
         prev = data.get(mes, {})
-        saldo["llamadas"] = int(prev.get("llamadas", 0)) + 1
-        saldo["tokens_in"] = int(prev.get("tokens_in", 0)) + tin
-        saldo["tokens_out"] = int(prev.get("tokens_out", 0)) + tout
-        data[mes] = saldo
+        data[mes] = {
+            "usd": round(float(prev.get("usd", 0.0)) + costo, 6),
+            "llamadas": int(prev.get("llamadas", 0)) + 1,
+            "tokens_in": int(prev.get("tokens_in", 0)) + tin,
+            "tokens_out": int(prev.get("tokens_out", 0)) + tout,
+            "imagenes": int(prev.get("imagenes", 0)),
+        }
+        _anotar_dia(data, costo, tin=tin, tout=tout)
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:  # noqa: BLE001 — jamás romper una respuesta por bookkeeping
         pass
@@ -291,8 +395,8 @@ def _registrar_gasto_gemini(cfg: dict, body: dict) -> None:
 def _registrar_gasto_extra(costo_usd: float, detalle: str) -> None:
     """Ledger compartido de costo Pro (texto + imágenes) en state/llm_budget.json.
 
-    Los gastos de imagen se suman a `usd` del mes, así el tope GEMINI_PRESUPUESTO_USD_MES
-    cubre TODO lo pago del canal — no es por sesión ni por modelo.
+    Los gastos de imagen se suman a `usd` del mes y del día, así los topes de Gemini
+    cubren TODO lo pago del canal — no es por sesión ni por modelo.
     """
     try:
         mes = time.strftime("%Y-%m")
@@ -307,6 +411,7 @@ def _registrar_gasto_extra(costo_usd: float, detalle: str) -> None:
             "imagenes": int(prev.get("imagenes", 0)) + 1,
             "ultimo_detalle": detalle[:80],
         }
+        _anotar_dia(data, costo_usd, imagen=True)
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:  # noqa: BLE001 — jamás romper una respuesta por bookkeeping
         pass
@@ -372,41 +477,68 @@ def _call_provider(name: str, messages: list[dict], temperature: float,
             return None, "cache con sólo razonamiento (se vuelve a pedir)"
         return {"text": texto, "latency": 0.0, "cost": 0.0, "cache": True}, None
     if name == "gemini":
-        tope = float(os.environ.get("GEMINI_PRESUPUESTO_USD_MES", "4.50"))
-        gasto = _gasto_gemini()
-        if gasto >= tope:
-            return None, (f"presupuesto mensual de Gemini agotado "
-                          f"({gasto:.2f} USD >= {tope:.2f} USD)")
+        # Proyección del costo de ESTE pedido antes de hacerlo: sin esto el tope diario se
+        # descubría recién al día siguiente, con el saldo ya pasado de largo.
+        estimado = (_tokens_aprox(messages) * cfg["precio_in_usd_mtok"] / 1e6
+                    + max_tokens * cfg["precio_out_usd_mtok"] / 1e6)
+        permitido, motivo = gasto_gemini_permitido(estimado)
+        if not permitido:
+            _health_record(name, "tope_diario", motivo)
+            return None, motivo
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    t0 = time.time()
-    r, err = _post(cfg["url"], payload, headers, name)
-    if r is None:
-        return None, err
-    latency = round(time.time() - t0, 2)
-    body = r.json()
-    if cfg.get("api") == "cloudflare":
-        if not body.get("success"):
-            return None, f"cloudflare sin success: {str(body.get('errors'))[:150]}"
-        result = body.get("result") or {}
-        # Workers AI cambió de formato: @cf/meta/llama-3.1-8b-* devuelve adentro de result
-        # un chat.completion de OpenAI (medido 2026-11-05). Leer sólo result.response daba
-        # vacío y tiraba toda la corrida al modelo local de 1.5B.
-        if isinstance(result, dict) and result.get("choices"):
-            text = _contenido_de(result["choices"][0])
+    text, body, latency = "", None, 0.0
+    for intento in range(2):
+        t0 = time.time()
+        r, err = _post(cfg["url"], payload, headers, name)
+        if r is None:
+            return None, err
+        latency = round(time.time() - t0, 2)
+        body = r.json()
+        finish = ""
+        if cfg.get("api") == "cloudflare":
+            if not body.get("success"):
+                return None, f"cloudflare sin success: {str(body.get('errors'))[:150]}"
+            result = body.get("result") or {}
+            # Workers AI cambió de formato: @cf/meta/llama-3.1-8b-* devuelve adentro de result
+            # un chat.completion de OpenAI (medido 2026-11-05). Leer sólo result.response daba
+            # vacío y tiraba toda la corrida al modelo local de 1.5B.
+            if isinstance(result, dict) and result.get("choices"):
+                finish = result["choices"][0].get("finish_reason") or ""
+                text = _contenido_de(result["choices"][0])
+            else:
+                text = result.get("response", "") if isinstance(result, dict) else ""
         else:
-            text = result.get("response", "") if isinstance(result, dict) else ""
-    else:
-        choices = body.get("choices") or []
-        if not choices:
-            return None, "respuesta sin choices"
-        text = _contenido_de(choices[0])
-    text = _sin_razonamiento(text)
-    if not text or not text.strip():
+            choices = body.get("choices") or []
+            if not choices:
+                return None, "respuesta sin choices"
+            finish = choices[0].get("finish_reason") or ""
+            text = _contenido_de(choices[0])
+        text = _sin_razonamiento(text)
+        if name == "gemini":
+            # Se anota CADA respuesta (también la truncada): el ledger tiene que reflejar
+            # lo que de verdad se facturó, no sólo la llamada que sirvió.
+            _registrar_gasto_gemini(cfg, body)
+        if text and text.strip():
+            break
+        # Modelo de razonamiento: se comió max_tokens pensando (finish_reason=length) y
+        # dejó el content vacío. Pasó con el arreglo de título (max_tokens=60) y mató el
+        # episodio de "I, Robot" el 2026-11-08. Se repite UNA vez con más margen.
+        if intento == 0 and finish == "length" and max_tokens < 2000:
+            nuevo = int(min(max(400, max_tokens * 4), 2000))
+            if name == "gemini":
+                estimado = (_tokens_aprox(messages) * cfg["precio_in_usd_mtok"] / 1e6
+                            + nuevo * cfg["precio_out_usd_mtok"] / 1e6)
+                permitido, motivo = gasto_gemini_permitido(estimado)
+                if not permitido:
+                    return None, motivo
+            print(f"  {name}: respuesta vacía por truncado ({max_tokens} tokens); "
+                  f"repito con {nuevo}")
+            max_tokens = nuevo
+            payload = {**payload, "max_tokens": nuevo}
+            continue
         return None, "respuesta vacía (el presupuesto se fue en razonamiento)"
-    if name == "gemini":
-        _registrar_gasto_gemini(cfg, body)
     _health_record(name, "ok", "respondió chat completions")
     cache_put(name, payload, text)
     return {"text": text, "latency": latency, "cost": 0.0, "cache": False}, None
@@ -429,6 +561,19 @@ def ruta_de(task: str) -> list[str]:
     return route or ["ollama"]
 
 
+# Aviso único por proceso: si Gemini termina verificando lo que él mismo escribió, el
+# gate 1 pierde independencia (misión §3) y eso tiene que quedar dicho, no escondido.
+_AVISO_VERIFICACION = {"dicho": False}
+
+
+def _avisar_verificacion_propia() -> None:
+    if _AVISO_VERIFICACION["dicho"]:
+        return
+    _AVISO_VERIFICACION["dicho"] = True
+    print("  aviso: Gemini verifica el texto que escribió (no hay otro proveedor con cuota); "
+          "el fact-check de hoy es menos independiente y queda registrado en state/llm_log.jsonl")
+
+
 def chat(messages: list[dict], *, temperature: float = 0.4, max_tokens: int = 1500,
          tag: str = "", episode: str = "", task: str = "") -> str:
     """Recorre la ruta de la tarea y devuelve el texto de la primera respuesta exitosa.
@@ -449,6 +594,8 @@ def chat(messages: list[dict], *, temperature: float = 0.4, max_tokens: int = 15
     for name in route:
         result, err = _call_provider(name, messages, temperature, max_tokens)
         if result:
+            if name == "gemini" and task == "verificacion":
+                _avisar_verificacion_propia()
             _log({
                 "ts": _now(), "episode": episode, "task": task, "tag": tag,
                 "provider": name, "model": config.PROVIDERS[name]["model"],

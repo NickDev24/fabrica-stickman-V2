@@ -35,3 +35,8 @@ tools/
 VIABILIDAD.md
 work/
 youtube-mcp/
+
+# herramientas locales vendorizadas (piper/onnxruntime/numpy) - no versionar
+vendor/
+docker/factory/edge-tts
+docker/factory/piper

@@ -12,8 +12,8 @@ se las mueve encima. Acá esa imagen la genera un modelo de difusión hosted gra
 sobre la foto fija (zoom/paneo/tumbo), que es exactamente lo que hace el formato.
 
 Cadena: script narrado -> beats (factory/acting/beats.py) -> 1 keyframe por beat ->
-plano con cámara -> hoja de contactos -> concat sin subtítulos -> voz + cama musical +
-SFX por corte -> loudnorm -14 LUFS.
+plano con cámara -> hoja de contactos -> concat -> subtítulos dinámicos quemados
+(ASS) -> voz + cama musical + SFX por corte -> loudnorm -14 LUFS.
 
 CPU-only, sin GPU, sin Blender, sin librerías de pago.
 """
@@ -30,6 +30,7 @@ from pathlib import Path
 
 from .. import config, imagen
 from ..episode import Episode
+from . import reciclaje
 from factory import parametros
 
 # El máster documental nace en 9:16. Se conserva el presupuesto de píxeles
@@ -60,6 +61,15 @@ QC_PROPORCION_MUERTA = float(_QC_MICRO.get("proporcion_max_muerta", 0.9))
 # Piso de zoom 1,05 (antes 1,0 en push/pull): el recorte necesita holgura para poder oscilar.
 # Con zoom=1,0 la deriva de la respiración se clampa a 0 y el cuadro vuelve a ser un frame
 # muerto, que es justo lo que esta sección existe para evitar.
+# Reutilización dentro del episodio. Antes la imagen anterior se copiaba SÓLO por
+# compartir escena: dos momentos distintos del episodio terminaban con la misma
+# ilustración (reportado por el dueño: "escenas que reusan la misma imagen").
+# Ahora la imagen sólo se reusa si el beat es la MISMA toma (escena+acción+plano)
+# o si la idea/narración es prácticamente la misma.
+KF_REUTILIZAR_UMBRAL = float(os.environ.get("KF_REUTILIZAR_UMBRAL", "0.80"))
+KF_REUTILIZAR_COMPOSICION = os.environ.get("KF_REUTILIZAR_COMPOSICION", "1").strip().lower() \
+    not in ("0", "false", "no", "off")
+
 CAMARA = {
     "push":       "z='1.05+0.03*on/{n}'",
     "push_lento": "z='1.05+0.01*on/{n}'",
@@ -138,6 +148,28 @@ def storyboard_md(ep: Episode, bs: list[dict]) -> Path:
 
 
 # ----------------------------------------------------------------------- keyframes
+def _idea_de(b: dict) -> str:
+    """Texto que representa el contenido visual del beat (narración + idea de dirección)."""
+    d = b.get("direccion") or {}
+    return " ".join(str(b.get(k) or "") for k in ("texto", "contexto", "oracion")) \
+        + " " + str(d.get("idea", ""))
+
+
+def _reutilizable(b: dict, comp_ultima: tuple[str, str, str], texto_ultimo: str) -> bool:
+    """True sólo si la imagen anterior representa este beat.
+
+    Regla: misma toma (escena+acción+plano) o idea/narración casi idéntica.
+    """
+    if not comp_ultima or not texto_ultimo:
+        return False
+    if KF_REUTILIZAR_COMPOSICION and comp_ultima == (
+            str(b.get("escena", "")), str(b.get("accion", "")), str(b.get("plano", ""))):
+        return True
+    if KF_REUTILIZAR_UMBRAL > 0:
+        return reciclaje.similitud(_idea_de(b), texto_ultimo) >= KF_REUTILIZAR_UMBRAL
+    return False
+
+
 def _preparar_keyframes(ep: Episode, bs: list[dict], *, modelo: str = "flux",
                        forzar: bool = False, reciclar: bool = False,
                        renovar: set[int] | None = None) -> tuple[list[dict], dict]:
@@ -159,25 +191,35 @@ def _preparar_keyframes(ep: Episode, bs: list[dict], *, modelo: str = "flux",
     ultima_viva: Path | None = None
     escena_ultima = ""
     desde_ultima = 0
+    ultima_comp: tuple[str, str, str] = ("", "", "")
+    ultimo_texto = ""
     for b in bs:
         prompt = imagen.armar_prompt_dirigido(b)
         out = carpeta / f"kf-{b['i']:03d}.{imagen.extension(modelo)}"
         b["prompt"] = prompt
         renovar_este = forzar or int(b["i"]) in renovar
+        escena = str(b.get("escena", ""))
+        comp = (escena, str(b.get("accion", "")), str(b.get("plano", "")))
         if out.exists() and not renovar_este:
             ruta.append(out)
             ultima_viva = out
-            escena_ultima = str(b.get("escena", ""))
+            escena_ultima = escena
+            ultima_comp = comp
+            ultimo_texto = _idea_de(b)
             continue
-        escena = str(b.get("escena", ""))
         genera = (bool(b.get("gancho")) or renovar_este or ultima_viva is None
                   or escena != escena_ultima or desde_ultima >= cada
                   or not ultima_viva.exists())
+        if not genera and not _reutilizable(b, ultima_comp, ultimo_texto):
+            # Mismo escenario pero otra toma o contenido distinto: copiar la imagen
+            # repetiría una ilustración que no corresponde a lo narrado.
+            genera = True
         if not genera:
             out.write_bytes(ultima_viva.read_bytes())
             reciclados += 1
             desde_ultima += 1
             ruta.append(out)
+            # NO se actualizan ultima_comp/ultimo_texto: describen la imagen en uso.
             continue
         imagen.generar(prompt, out, modelo=modelo, forzar=renovar_este, reciclar=reciclar,
                        escena=escena,
@@ -187,6 +229,8 @@ def _preparar_keyframes(ep: Episode, bs: list[dict], *, modelo: str = "flux",
         desde_ultima = 0
         escena_ultima = escena
         ultima_viva = out
+        ultima_comp = comp
+        ultimo_texto = _idea_de(b)
         ruta.append(out)
     return bs, {"frames": len(ruta), "generados_nuevos": nuevos, "reciclados": reciclados,
                 "segundos_api": round(time.time() - t0, 1), "modelo": modelo, "rutas": ruta}
@@ -491,6 +535,105 @@ def _cama(ep: Episode, segundos: float) -> Path:
     return out
 
 
+
+def _ass_tiempo(s: float) -> str:
+    s = max(0.0, float(s))
+    h = int(s // 3600)
+    m = int((s % 3600) // 60)
+    sec = s % 60
+    return f"{h}:{m:02d}:{sec:05.2f}"
+
+
+def _ass_escape(texto: str) -> str:
+    # ASS usa llaves para overrides; saltos de línea y backslashes rompen el parseo.
+    return (texto.replace("\\", "/").replace("{", "(").replace("}", ")")
+            .replace("\n", " ").replace("\r", " ").strip())
+
+
+def _frase_sub(t: str, max_chars: int = 34) -> str:
+    """Parte en 1-2 líneas legibles en móvil sin cortar palabras."""
+    t = re.sub(r"\s+", " ", (t or "").strip())
+    if len(t) <= max_chars:
+        return t
+    palabras = t.split()
+    mejor, mejor_d = t, 10**9
+    for i in range(1, len(palabras)):
+        a, b = " ".join(palabras[:i]), " ".join(palabras[i:])
+        d = abs(len(a) - len(b)) + (0 if max(len(a), len(b)) <= max_chars else 20)
+        if d < mejor_d:
+            mejor_d, mejor = d, a + r"\N" + b
+    return mejor
+
+
+def _palabras_clave(t: str) -> list[str]:
+    """2-4 palabras con peso visual (números o léxico largo), para resaltar en subtítulo."""
+    stop = {"sobre","desde","hasta","donde","cuando","porque","entre","tambien","también",
+            "contra","luego","entonces","después","despues","antes","había","habia",
+            "estaba","fueron","tiene","tenía","tenia","hacer","puede","quedó","quedo",
+            "según","segun","todos","todas","parte","lugar","forma","mismo","misma"}
+    claves = []
+    for w in re.findall(r"\w+", t or "", flags=re.U):
+        wl = w.lower()
+        if (any(ch.isdigit() for ch in w) or (len(w) >= 6 and wl not in stop)):
+            if wl not in {k.lower() for k in claves}:
+                claves.append(w)
+        if len(claves) >= 4:
+            break
+    return claves
+
+
+def _subtitulo_resaltado(texto: str, pop: str = "") -> str:
+    """Texto ASS con énfasis en palabra clave/POP (alto contraste, legible en scroll)."""
+    base = _ass_escape(_frase_sub(texto))
+    claves = _palabras_clave(pop) + _palabras_clave(texto)
+    vistos = set()
+    for c in claves:
+        cl = c.lower()
+        if cl in vistos:
+            continue
+        vistos.add(cl)
+        patron = re.compile(rf"(?<!\w)({re.escape(_ass_escape(c))})(?!\w)", re.I)
+        nuevo = patron.sub(r"{\\c&H00D7FF&\\b1}\1{\\r}", base, count=1)
+        if nuevo != base:
+            base = nuevo
+            break
+    return base
+
+
+def _generar_subtitulos_ass(ep: "Episode", bs: list[dict]) -> Path | None:
+    """Subtítulos dinámicos (1 evento por beat) quemados en el máster para retención móvil.
+
+    Desactivable con KF_SUBTITULOS=0. No altera duración ni resolución (QC intacto).
+    """
+    if os.environ.get("KF_SUBTITULOS", "1").strip().lower() in ("0", "false", "no", "off"):
+        return None
+    eventos = []
+    for b in bs:
+        txt = str(b.get("texto") or "").strip()
+        t0, t1 = float(b.get("t0", 0.0)), float(b.get("t1", 0.0))
+        if not txt or t1 <= t0:
+            continue
+        eventos.append((t0, t1, _subtitulo_resaltado(txt, str(b.get("pop") or ""))))
+    if not eventos:
+        return None
+    estilo = ("Style: Sub,DejaVu Sans,54,&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,"
+              "-1,0,0,0,100,100,0,0,3,3.2,1.2,2,40,40,215,1")
+    cab = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n"
+           "ScaledBorderAndShadow: yes\n\n[V4+ Styles]\n"
+           "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,"
+           " BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle,"
+           " BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+           f"{estilo}\n\n[Events]\n"
+           "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+    lineas = [cab]
+    for t0, t1, txt in eventos:
+        lineas.append(f"Dialogue: 0,{_ass_tiempo(t0)},{_ass_tiempo(max(t0 + 0.2, t1 - 0.03))},Sub,,0,0,0,,{txt}\n")
+    ruta = ep.artifacts / "subtitulos.ass"
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text("".join(lineas), encoding="utf-8")
+    return ruta
+
+
 # ----------------------------------------------------------------------------- render
 def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
            solo_contacto: bool = False, reciclar: bool = False,
@@ -502,9 +645,7 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     bs = beats_de(ep, forzar=forzar)
     if not bs:
         raise SystemExit("keyframes: el planificador no devolvió beats")
-    # Este render omite títulos editoriales y subtítulos quemados.
-    for b in bs:
-        b["pop"] = ""
+    # "pop" se conserva para resaltar palabras clave en subtítulos (si aplica).
     storyboard = storyboard_md(ep, bs)
     bs, stats = _preparar_keyframes(ep, bs, modelo=modelo, forzar=forzar,
                                     reciclar=reciclar, renovar=renovar)
@@ -585,9 +726,17 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
     nl = _normalizador(meza)
 
     salida = ep.dir / "renders" / f"{ep.slug}-keyframe.mp4"
+    ass = _generar_subtitulos_ass(ep, bs)
+    if ass:
+        # Escapar para filter_complex: ruta con : ' \ debe ir protegida.
+        ass_f = str(ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        fc = f"[0:v]ass='{ass_f}'[v];[1:a]{nl}[a]"
+        maps = ["-map", "[v]", "-map", "[a]"]
+    else:
+        fc = f"[1:a]{nl}[a]"
+        maps = ["-map", "0:v:0", "-map", "[a]"]
     _run(["ffmpeg", "-y", "-v", "error", "-i", str(mudo), "-i", str(meza),
-          "-filter_complex", f"[1:a]{nl}[a]",
-          "-map", "0:v:0", "-map", "[a]",
+          "-filter_complex", fc, *maps,
           "-c:v", "libx264", "-preset", str(config.FFMPEG_PRESET), "-crf", str(config.FFMPEG_CRF),
           "-pix_fmt", "yuv420p", "-r", str(KF_FPS), "-c:a", "aac", "-b:a", "128k",
           "-ar", "44100", "-ac", "2", "-shortest", "-movflags", "+faststart", str(salida)])
@@ -615,6 +764,7 @@ def render(ep: Episode, *, modelo: str = "flux", forzar: bool = False,
         "ram_pico_mb": round(ram_kb / 1024, 1),
         "loudness_lufs": medidos["lufs"], "problemas": medidos["problemas"],
         "contacto": str(sheet.relative_to(ep.dir)),
+        "subtitulos": str(ass.relative_to(ep.dir)) if ass else None,
         "pendientes": ["motion blur por promedio de 4 muestras (no implementado: el zoompan "
                        "no lo da y minterpolate no cuesta poco en 2 núcleos)",
                        "60 fps (KF_FPS=60 funciona, medido a 30 por costo en el B950)"],

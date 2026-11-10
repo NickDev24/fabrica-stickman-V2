@@ -120,22 +120,33 @@ def _corte_trailer(ep: Episode, main: Path, t0: float, segundos: float,
     total = max(1.5, min(segundos, max(0.0, _dur(main) - t0 - 0.1)))
     dur = total
     fade_en = max(0.0, dur - 3.0)
-    # El CTA va por textfile: embeberlo en text='...' rompe el parseo del filtergraph en
-    # cuanto el texto tiene un dos puntos ("hoy 23:00 hs"). Mismo texto, en 2 líneas para
-    # que no desborde el ancho.
+    # Hook de 0,6 s + CTA final: el CTA va por ASS (alpha fade) para no romper el
+    # filtergraph con ":" en drawtext. El salto de zoom al inicio fuerza un "pattern interrupt".
     carpeta = ep.dir / "artifacts" / "captacion"
     carpeta.mkdir(parents=True, exist_ok=True)
-    txt_cta = carpeta / "cta.txt"
-    txt_cta.write_text("Capítulo completo\nhoy 23:00 hs en YouTube", encoding="utf-8")
+    ass_cta = carpeta / f"cta-{dst.stem}.ass"
+    fade_ms = int(fade_en * 1000)
+    def _ass_t(s):
+        s = max(0.0, float(s)); h=int(s//3600); m=int((s%3600)//60); sec=s%60
+        return f"{h}:{m:02d}:{sec:05.2f}"
+    ass_cta.write_text(
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n"
+        "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour,"
+        " OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY,"
+        " Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: CTA,DejaVu Sans,58,&H00FFFFFF,&H000000FF,&H00000000,&H90000000,-1,0,0,0,100,100,0,0,3,3,0,2,60,60,220,1\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        f"Dialogue: 0,{_ass_t(fade_en)},{_ass_t(dur)},CTA,,0,0,0,,{{\\fad(350,0)}}Capítulo completo\\Nhoy 23:00 hs en YouTube\n",
+        encoding="utf-8")
+    ass_f = str(ass_cta).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
     vf = (f"scale=1080:1920:flags=lanczos,setsar=1,"
-          f"drawtext=textfile={txt_cta}:fontfile=/usr/share/fonts/truetype/dejavu/"
-          f"DejaVuSans-Bold.ttf:fontcolor=white:fontsize=46:x=(w-text_w)/2:y=h-text_h-200:"
-          f"line_spacing=8:box=1:boxcolor=black@0.55:boxborderw=18:alpha='if(lt(t,{fade_en}),0,"
-          f"min((t-{fade_en})/0.4,1))'")
+          f"zoompan=z='if(lt(on,18),1.14-0.14*on/18,1.0+0.04*on/({max(1,int(dur*30))}))':"
+          f"d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,"
+          f"eq=contrast=1.06:saturation=1.08,ass='{ass_f}'")
     cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{t0:.3f}", "-i", str(main),
            "-t", f"{dur:.3f}", "-vf", vf, "-map", "0:v:0", "-map", "0:a?",
            "-c:v", "libx264", "-preset", str(config.FFMPEG_PRESET), "-crf",
-           str(config.FFMPEG_CRF), "-pix_fmt", "yuv420p",
+           str(config.FFMPEG_CRF), "-pix_fmt", "yuv420p", "-r", "30",
            "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
            "-movflags", "+faststart", str(dst)]
     _run(cmd)

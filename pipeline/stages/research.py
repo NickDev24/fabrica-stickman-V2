@@ -10,6 +10,7 @@ import requests
 
 from .. import config, gates, llm, nichos, web
 from ..episode import Episode
+from ..gates import GateFailure
 
 
 def _fetch(url: str) -> str:
@@ -121,7 +122,11 @@ def research(ep: Episode) -> None:
         except (requests.RequestException, ValueError) as exc:
             print(f"  fetch descartado [{i}] {url}: {exc}")
     if len(fetched) < 2:
-        raise SystemExit("menos de 2 fuentes legibles: el gate 1 no se puede cumplir con este material.")
+        # Es un rechazo editorial del gate 1, no una caída del motor: sale como GateFailure
+        # para que la fábrica (rc=2) descarte la idea y pruebe la próxima sin el backoff de
+        # 15 minutos que sí corresponde a un error de infraestructura.
+        raise GateFailure("fuentes", ["menos de 2 fuentes legibles: el gate 1 no se puede "
+                                      "cumplir con este material."])
 
     estado = ep.read_state()
     ficcion = bool(estado.get("categoria")) and nichos.es_ficcion(estado["categoria"])
@@ -186,9 +191,10 @@ def research(ep: Episode) -> None:
     unicas.sort(key=lambda c: (-min(_dominios(c), 3), -len(str(c["claim"]))))
     seleccion = unicas[:8]
     if len(seleccion) < 4:
-        raise SystemExit(f"research: sólo {len(seleccion)} afirmaciones con 2+ dominios que las "
-                         "respalden (el guion necesita 4-8 anclas). Gate 1: no se publica con "
-                         "investigación de una sola fuente.")
+        raise GateFailure("fuentes", [
+            f"research: sólo {len(seleccion)} afirmaciones con 2+ dominios que las respalden "
+            "(el guion necesita 4-8 anclas). Gate 1: no se publica con investigación de una "
+            "sola fuente."])
 
     sources = {"slug": ep.slug, "claims": [], "modo": "ficcion" if ficcion else "factico"}
     for c in seleccion:

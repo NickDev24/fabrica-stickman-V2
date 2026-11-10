@@ -105,6 +105,13 @@
           <h2 class="sec-tit">Producción en vivo</h2>
           <span id="ep-actual" class="ep-actual">—</span>
         </div>
+        <!-- control real del ciclo 24/7 (POST /api/control en factoryd) -->
+        <div class="btn-group" style="margin:0 0 12px; flex-wrap:wrap;">
+          <button id="btn-play" class="btn primary small">▶ Play</button>
+          <button id="btn-pausa" class="btn outline small">⏸ Pausa</button>
+          <button id="btn-stop" class="btn danger small">⏹ Detener</button>
+          <button id="btn-skip" class="btn outline small">⏭ Saltar episodio</button>
+        </div>
         <div id="cinta" class="cinta">
           <div class="cinta-rail" aria-hidden="true"><i class="paquete"></i></div>
           <div class="cinta-estaciones" id="estaciones"></div>

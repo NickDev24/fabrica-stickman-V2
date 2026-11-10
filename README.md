@@ -23,7 +23,10 @@
   en primeros planos.
 - **Panel web (Mission Control):** cinta de producción en vivo, galería, métricas YT/FB
   (vía Zernio), conectores MCP, Oficina 3D (carrusel 3D de agentes).
-- **Reciclado inteligente de imágenes:** consume caché antes de pedir nuevas (≈ mitad de costo).
+- **Reciclado inteligente de imágenes:** consume caché e imagenoteca antes de pedir nuevas (≈ mitad de costo).
+  Ingesta de imágenes generadas por otra IA: `python -m pipeline.run ingerir` (carpeta `assets/ingesta/`).
+- **Publicación de cómics:** `python -m pipeline.run comics <slug>` produce el libro (comics.v2)
+  y publica el carrusel en Facebook cuando el QC aprueba.
 - **Publicación autónoma diaria** con gates de QC, título y flag sintético como cinturón de seguridad.
 - **Validación viral experta:** antes de publicar por Zernio se corrigen, con protocolos propios
   (`factory/validacion_viral.py`), los controles de creatividad/retención — estimulación visual,
@@ -76,6 +79,9 @@ Variables principales en `.env`:
 | `ZERNIO_YOUTUBE_ID` / `ZERNIO_FACEBOOK_ID` | IDs de cuenta |
 | `FACTORY_PUBLISH` | `1` publica de forma autónoma (default en compose) |
 | `KF_RECICLADO_CADA` | cada cuántas escenas se recicla imagen (`2` = mitad) |
+| `KF_RECLICAR_BIBLIOTECA` | `1` (default) habilita el reciclado de la imagenoteca + caché en la fábrica 24/7 |
+| `KF_REUTILIZAR_UMBRAL` | coincidencia mínima de idea para reusar una imagen dentro del episodio (`0.80`) |
+| `COMICS_CAPTIONS_MAX_PALABRAS` | presupuesto de palabras por caption del cómic (`18`) |
 | `OLLAMA_BASE_URL` | endpoint de Ollama (LLM local, gratis) |
 | `OPENAI_API_KEY` | API key OpenAI (GPT Image) — nuevo salvapantallas de la cascada de imágenes |
 | `PORT` (factory) | `8610` (REST + WebSocket) |

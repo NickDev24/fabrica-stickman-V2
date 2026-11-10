@@ -118,6 +118,22 @@ async function init() {
     $("#hora").textContent = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   }, 20000);
 
+  // control del ciclo 24/7 (mismas acciones que ya expone factoryd en /api/control)
+  const control = async (accion, msg) => {
+    try {
+      await POST("/api/control", { accion });
+      toast(msg, "good");
+      await refrescarEstado();
+      pintar();
+    } catch (e) {
+      toast("La fábrica no respondió al control", "err");
+    }
+  };
+  $("#btn-play").onclick = () => control("play", "▶ Ciclo 24/7 lanzado");
+  $("#btn-pausa").onclick = () => control("pausa", "⏸ La fábrica cierra el episodio en curso y se detiene");
+  $("#btn-stop").onclick = () => control("stop", "⏹ Fábrica detenida");
+  $("#btn-skip").onclick = () => control("skip", "⏭ Saltando al próximo episodio");
+
   // publicación (autorizar / desautorizar YouTube + Facebook vía Zernio)
   const btnPub = $("#btn-publicar");
   const chipPub = $("#chip-publica");
@@ -133,6 +149,17 @@ async function init() {
     }
   };
 }
+function pintarControles() {
+  const play = $("#btn-play"), pausa = $("#btn-pausa"),
+        stop = $("#btn-stop"), skip = $("#btn-skip");
+  if (!play) return;
+  const corriendo = S.modo === "corriendo";
+  play.disabled = corriendo || S.modo === "deteniendo";
+  pausa.disabled = !corriendo;
+  stop.disabled = S.modo === "idle";
+  skip.disabled = !corriendo;
+};
+
 function pintarPublica() {
   const on = !!S.publica;
   const btn = $("#btn-publicar");
@@ -209,12 +236,17 @@ function pintarRailEstado() {
   if (S.modo === "corriendo") {
     chip.textContent = "PRODUCIENDO"; chip.className = "rchip on";
     const meta = epPorSlug(S.ep);
-    epn.textContent = meta ? meta.titulo : (S.ep || "—");
+    epn.textContent = meta ? meta.titulo
+      : (S.ep || "buscando la próxima historia verificada");
+  } else if (S.modo === "deteniendo") {
+    chip.textContent = "DETENIENDO"; chip.className = "rchip";
+    epn.textContent = "cerrando el episodio en curso…";
   } else {
     chip.textContent = "EN ESPERA"; chip.className = "rchip";
     epn.textContent = `${S.estado?.episodios_hoy || 0} episodios hoy`;
   }
   publica.textContent = `Publicación: ${S.publica ? "ON" : "OFF"}`;
+  pintarControles();
 }
 function epPorSlug(slug) { return S.galeria.find((e) => e.slug === slug); }
 
@@ -232,7 +264,9 @@ function bannerFabrica() {
     chip.className = "bf-chip vivo";
     const meta = epPorSlug(S.ep);
     titulo.textContent = `Fábrica en producción${meta ? `: ${meta.titulo}` : ""}`;
-    sub.textContent = `${S.estado?.episodios_hoy || 0} episodios hoy · ciclo 24/7 activo`;
+    sub.textContent = meta
+      ? `${S.estado?.episodios_hoy || 0} episodios hoy · ciclo 24/7 activo`
+      : "verificando ideas y fuentes para el próximo episodio · ciclo 24/7 activo";
     epsHoy.textContent = S.estado?.episodios_hoy ?? 0;
     pubEstado.textContent = S.publica ? "ON" : "OFF";
     pubEstado.className = S.publica ? "bf-pub on" : "bf-pub off";
@@ -325,7 +359,7 @@ function pintarFeedEps() {
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           ${acciones}
-          ${qcOk ? `<a href="#" class="btn outline small" style="font-size:11px; padding:6px 12px;">📚 Ver cómic</a>` : ""}
+          ${qcOk ? `<button class="btn outline small" style="font-size:11px; padding:6px 12px;" onclick="cambiarVista('comics')">📚 Ver cómic</button>` : ""}
         </div>
       </div>`;
     if (video) {
@@ -788,7 +822,10 @@ async function editarConector(platform) {
   $("#conc-nombre").value = c.nombre || "";
   $("#conc-endpoint").value = c.endpoint || "";
   $("#conc-auth").value = c.auth_tipo || "none";
-  $("#conc-token").value = c.token || "";
+  // El backend devuelve el token MASCARADO: reenviarlo lo guardaría como si fuera el real.
+  // Se deja vacío y, si queda vacío, se conserva el token que ya está guardado.
+  $("#conc-token").value = "";
+  $("#conc-token").placeholder = c.token ? `${c.token} — dejalo vacío para no cambiarlo` : "sk_… o token";
   $("#conc-scopes").value = (c.scopes || []).join(", ");
   $("#conc-msg").textContent = `Editando conector "${c.platform}". Cambiá los campos y guardá.`;
   $("#btn-agregar-conector").textContent = "💾 Guardar cambios";
@@ -816,10 +853,21 @@ async function guardarConector(platformOverride = null) {
   const scopesRaw = $("#conc-scopes").value.trim();
   const scopes = scopesRaw ? scopesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
   if (!platform) { toast("Completá la platform", "err"); return; }
+  const cuerpo = { nombre, endpoint, auth_tipo, scopes };
+  if (token) cuerpo.token = token;   // vacío = conservar el token ya guardado
   try {
-    const res = await POST("/api/conectores/agregar", {
-      platform, nombre, endpoint, auth_tipo, token, scopes,
-    });
+    let res;
+    if (platformOverride) {
+      // Editar usa PUT /api/conectores/{platform}: POST /agregar reemplaza el registro
+      // entero y borraba el token real con el valor mascarado que mostraba la tarjeta.
+      const r = await fetch(`/api/conectores/${encodeURIComponent(platform)}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cuerpo),
+      });
+      res = await r.json();
+    } else {
+      res = await POST("/api/conectores/agregar", { platform, ...cuerpo });
+    }
     toast(res.ok ? `Conector "${platform}" guardado` : "No se pudo guardar", res.ok ? "good" : "err");
     if (res.ok) {
       limpiarFormConector();
@@ -836,6 +884,7 @@ function limpiarFormConector() {
   $("#conc-endpoint").value = "";
   $("#conc-auth").value = "none";
   $("#conc-token").value = "";
+  $("#conc-token").placeholder = "sk_… o token";
   $("#conc-scopes").value = "";
   $("#conc-msg").textContent = "";
   $("#btn-agregar-conector").textContent = "➕ Registrar / actualizar conector";

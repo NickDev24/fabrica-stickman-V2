@@ -16,6 +16,7 @@ import re
 from datetime import datetime
 
 from . import config, formatos, llm, nichos, tendencias
+from .gates import GateFailure
 
 
 def _canal(categoria: str) -> dict:
@@ -116,8 +117,14 @@ def verificar(card: dict) -> dict:
         urls = descubrir.descubrir(ep, card["tema"])
         research.research(ep)
         research.factcheck(ep)
-    except SystemExit as exc:
+    except (SystemExit, GateFailure, llm.AllProvidersFailed) as exc:
+        # El gate 1 rechaza con GateFailure (afirmaciones refutadas, fuentes del mismo
+        # dominio, veredictos pendientes). Antes sólo se atrapaba SystemExit: una idea
+        # refutada tumbaba las 8 del lote y la fábrica moría en un bucle de tracebacks.
+        # Rechazar una idea es parte del trabajo: se marca y se sigue con la próxima.
         card.update({"estado": "descartada_sin_fuentes", "motivo": str(exc)[:200]})
+        print(f"  idea descartada por gate/fuentes ({card.get('tema', '')[:32]}): "
+              f"{str(exc)[:110]}")
         return card
     fuentes = ep.read_json("sources.json")
     afirmaciones = [c["claim"] for c in fuentes["claims"] if c.get("verdict") != "refutada"]
