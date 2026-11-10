@@ -11,6 +11,8 @@ avatar_4f/
 CODEX.md
 /docs/
 !/assets/docs/
+!/docs/muse-animated-short-film/
+!/docs/muse-animated-short-film/**
 .env
 ESTRATEGIA_PUBLICACION.md
 models/

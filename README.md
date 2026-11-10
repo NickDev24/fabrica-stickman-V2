@@ -221,6 +221,12 @@ tests/                        # pruebas
 - [`docs/INSTALACION.md`](docs/INSTALACION.md) — guía de instalación
 - [`MEJORAS-PRO-2026-11-10.md`](MEJORAS-PRO-2026-11-10.md) — notas técnicas
 - [`DEPENDENCIAS.md`](DEPENDENCIAS.md) · [`FABRICA-DE-COMICS.md`](FABRICA-DE-COMICS.md) · [`PROTOCOLOS-VIRALES-FACTORY.md`](PROTOCOLOS-VIRALES-FACTORY.md)
+- [`docs/muse-animated-short-film/`](docs/muse-animated-short-film/INTEGRACION.md) — metodología integrada (Muse Animated Short Film, MIT): intake, character sheets, story bible, keyframes match-cut, mega prompts, VO y montaje; incluye `SKILL.md`, referencias y ejemplo *The Last Lantern*.
+
+- [`TUTORIAL_INSTALACION.md`](TUTORIAL_INSTALACION.md) — instalación, configuración y deploy
+- [`docs/INSTALACION.md`](docs/INSTALACION.md) — guía de instalación
+- [`MEJORAS-PRO-2026-11-10.md`](MEJORAS-PRO-2026-11-10.md) — notas técnicas
+- [`DEPENDENCIAS.md`](DEPENDENCIAS.md) · [`FABRICA-DE-COMICS.md`](FABRICA-DE-COMICS.md) · [`PROTOCOLOS-VIRALES-FACTORY.md`](PROTOCOLOS-VIRALES-FACTORY.md)
 
 ## Licencia
 
