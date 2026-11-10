@@ -106,10 +106,12 @@ MODELOS = {
 # igual que ya estaba. Cada eslabón decide con su propia disponibilidad — la
 # cascada no exige las credenciales del primario si no las va a usar.
 CADENA = {
-    "flux": ["openai", "pollinations", "hf-space", "gemini-imagen"],
-    "dreamshaper": ["openai", "pollinations", "hf-space", "gemini-imagen"],
-    "sdxl": ["openai", "pollinations", "hf-space", "gemini-imagen"],
-    "openai": [],
+    # Cascada orientada a costo cero: primarios Cloudflare -> gratis (Pollinations/HF) -> Gemini
+    # solo como último recurso pagado (respeta ALLOW_PAID_LLM + tope diario).
+    "flux": ["pollinations", "hf-space", "gemini-imagen"],
+    "dreamshaper": ["pollinations", "hf-space", "gemini-imagen"],
+    "sdxl": ["pollinations", "hf-space", "gemini-imagen"],
+    "openai": ["pollinations", "hf-space", "gemini-imagen"],
     "pollinations": ["hf-space", "gemini-imagen"],
     "hf-space": ["pollinations", "gemini-imagen"],
     "gemini-imagen": [],

@@ -593,7 +593,8 @@ def _subtitulo_resaltado(texto: str, pop: str = "") -> str:
             continue
         vistos.add(cl)
         patron = re.compile(rf"(?<!\w)({re.escape(_ass_escape(c))})(?!\w)", re.I)
-        nuevo = patron.sub(r"{\\c&H00D7FF&\\b1}\1{\\r}", base, count=1)
+        # Resalte “pop”: amarillo cálido + negrita + leve escala para fijar la mirada.
+        nuevo = patron.sub(r"{\\c&H00D7FF&\\b1\\fscx108\\fscy108}\1{\\r}", base, count=1)
         if nuevo != base:
             base = nuevo
             break
@@ -616,8 +617,10 @@ def _generar_subtitulos_ass(ep: "Episode", bs: list[dict]) -> Path | None:
         eventos.append((t0, t1, _subtitulo_resaltado(txt, str(b.get("pop") or ""))))
     if not eventos:
         return None
-    estilo = ("Style: Sub,DejaVu Sans,54,&H00FFFFFF,&H000000FF,&H00000000,&HA0000000,"
-              "-1,0,0,0,100,100,0,0,3,3.2,1.2,2,40,40,215,1")
+    # Subtítulo cinético/legible en móvil (retención): grande, contorno fuerte, sombra y
+    # caja semitransparente para contraste sobre cualquier fondo.
+    estilo = ("Style: Sub,DejaVu Sans,64,&H00FFFFFF,&H000000FF,&H00000000,&H78000000,"
+              "-1,0,0,0,100,100,0,0,3,4.5,2.0,2,48,48,190,1")
     cab = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n"
            "ScaledBorderAndShadow: yes\n\n[V4+ Styles]\n"
            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,"

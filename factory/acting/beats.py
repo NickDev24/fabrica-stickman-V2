@@ -120,24 +120,30 @@ def _pop(texto: str) -> str:
 
 def _plano(i: int, n: int, emocion: str, texto: str) -> str:
     if i == 0:
-        return "general"
-    if emocion in ("sorpresa", "suspenso") or FUERTE.search(texto):
         return "primer_plano"
+    if emocion in ("sorpresa", "suspenso") or FUERTE.search(texto):
+        return "primer_plano" if i % 3 != 1 else "detalle"
     if emocion == "tension":
-        return "contrapicado"
+        return "contrapicado" if i % 2 == 0 else "medio"
     if i == n - 1:
         return "detalle"
-    return "medio"
+    # primeros 30s (aprox primeros ~8-10 beats): más variedad/cercanía para retención
+    if i <= 8:
+        return ("primer_plano", "medio", "detalle", "contrapicado")[i % 4]
+    return ("medio", "detalle", "primer_plano", "contrapicado")[i % 4]
 
 
 def _mov(plano: str, emocion: str, i: int) -> str:
     if i == 0:
-        return "push"
-    if plano in ("primer_plano", "detalle"):
-        return "push_lento"
-    if emocion in ("sorpresa", "tension"):
         return "shake"
-    return "pan" if i % 2 else "pull"
+    if plano in ("primer_plano", "detalle"):
+        return "push_lento" if i % 3 else "push"
+    if emocion in ("sorpresa", "tension"):
+        return "shake" if i % 2 == 0 else "push"
+    # alternar para evitar monotonía; primeros 30s más energía
+    if i <= 8:
+        return ("push", "pan", "pull", "shake")[i % 4]
+    return ("pan", "pull", "push", "push_lento")[i % 4]
 
 
 def _direccion(texto: str, accion: str, escena: str, emocion: str, indice: int,
