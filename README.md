@@ -1,188 +1,208 @@
-# 🎬 PULSO Curioso — Fábrica Autónoma de Contenido
+# PULSO Curioso — Fábrica Autónoma de Contenido
 
-> Genera **videos estilo documental** (YouTube + Facebook Reels) y **cómics** de forma
-> autónoma, 24/7, con un límite diario gratuito respetado. Un solo `docker compose up`
-> y la fábrica empieza a producir.
+> Genera **videos estilo documental** (YouTube + Facebook Reels) y **cómics** de forma autónoma, 24/7, con enfoque $0-first (caché/reciclado y cascada de proveedores gratuitos). Un `docker compose up -d` levanta el backend y el panel.
 
-[![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](#instalación)
-[![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)](#)
-[![Frontend](https://img.shields.io/badge/dashboard-nginx%20%2B%20vanilla%20JS-10b981)](#frontend)
-[![Licencia](https://img.shields.io/badge/licencia-MIT-f59e0b)](#licencia)
+[![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](#-instalación-rápida)
+[![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)](#-arquitectura)
+[![Dashboard](https://img.shields.io/badge/dashboard-nginx%20%2B%20vanilla%20JS-10b981)](#-mission-control-panel-web)
+[![License: MIT](https://img.shields.io/badge/licencia-MIT-f59e0b)](#-licencia)
 
-![Dashboard — Inicio](assets/docs/dashboard-inicio.png)
+![Mission Control — Inicio](assets/docs/dashboard-inicio.png)
 
 ---
 
-## ✨ Qué hace
+## Contenido
 
-- **Fábrica de Video:** descubre temas, escribe guion, genera keyframes (IA), narra con TTS,
-  monta el video máster (9:16) con cama musical sintetizada (sin copyright) y deriva
-  YouTube Short + Facebook Reel, publica vía Zernio.
-- **Fábrica de Cómics:** convierte guiones en capítulos con viñetas, portadas y QC duro
-  (paneles negros, captions duplicados, ritmo, cold open). Personajes con cara expresiva
-  en primeros planos.
-- **Panel web (Mission Control):** cinta de producción en vivo, galería, métricas YT/FB
-  (vía Zernio), conectores MCP, Oficina 3D (carrusel 3D de agentes).
-- **Reciclado inteligente de imágenes:** consume caché e imagenoteca antes de pedir nuevas (≈ mitad de costo).
-  Ingesta de imágenes generadas por otra IA: `python -m pipeline.run ingerir` (carpeta `assets/ingesta/`).
-- **Publicación de cómics:** `python -m pipeline.run comics <slug>` produce el libro (comics.v2)
-  y publica el carrusel en Facebook cuando el QC aprueba.
-- **Publicación autónoma diaria** con gates de QC, título y flag sintético como cinturón de seguridad.
-- **Validación viral experta:** antes de publicar por Zernio se corrigen, con protocolos propios
-  (`factory/validacion_viral.py`), los controles de creatividad/retención — estimulación visual,
-  emoción universal, recompensa narrativa en el guion; hook + giro + Ki-Sho-Ten-Ketsu + ≥15
-  viñetas + grillas 3 bandas en el cómic.
-- **Identidad visual viral:** emoción universal + miniatura (packaging) + hook de 3 segundos
-  en cada idea; ritmo Ki-Sho-Ten-Ketsu en cómics.
+- [Qué hace](#-qué-hace)
+- [Instalación rápida](#-instalación-rápida)
+- [Tutorial de instalación (visual)](#-tutorial-de-instalación-visual)
+- [Configuración (.env)](#-configuración-env)
+- [Mission Control (panel web)](#-mission-control-panel-web)
+- [Ejemplos generados](#-ejemplos-generados)
+- [Arquitectura](#-arquitectura)
+- [Verificación y operación](#-verificación-y-operación)
+- [Solución de problemas](#-solución-de-problemas)
+- [Documentación](#-documentación)
 
-## 🚀 Instalación (primera vez)
+---
+
+## Qué hace
+
+| Módulo | Capacidades |
+|---|---|
+| **Fábrica de Video** | Descubre temas, escribe guion, genera keyframes (IA con cascada $0-first), narra con TTS, monta máster 9:16 con subtítulos dinámicos (ASS), deriva YouTube Short + Facebook Reel y publica vía Zernio (según configuración). |
+| **Fábrica de Cómics** | Convierte guiones en capítulos con viñetas y portada scroll-stopper (carrusel v3), captions legibles en móvil, variantes A/B/C de portada y QC/publicación. |
+| **Mission Control** | Panel web en vivo: cinta de producción, galería, métricas YT/FB, conectores MCP y Oficina 3D. |
+| **Costos y aprendizaje** | Reciclado/caché/ingesta de imágenes para reducir generación; bucle `medir → aprender` post-episodio (honesto con datos reales, sin simulación). |
+
+> Detalle técnico de mejoras recientes: [`MEJORAS-PRO-2026-11-10.md`](MEJORAS-PRO-2026-11-10.md).
+
+---
+
+## Instalación rápida
 
 ### Requisitos
 
-- Docker + Docker Compose
-- Git
-- (Opcional) claves de proveedores LLM y `ZERNIO_API_KEY` para publicación
+- [Git](https://git-scm.com/)
+- [Docker Engine](https://docs.docker.com/engine/install/) + [Docker Compose v2](https://docs.docker.com/compose/) (`docker compose`)
+- ~8–15 GB de disco libre y 8 GB+ RAM recomendados
 
-### Pasos
+### 3 pasos
 
 ```bash
-# 1. Clonar
-git clone https://github.com/NickDev24/fabrica-stickman.git
-cd fabrica-stickman
+# 1) Descargar
+git clone https://github.com/NickDev24/fabrica-stickman-V2.git
+cd fabrica-stickman-V2
 
-# 2. Configurar entorno
+# 2) Configurar
 cp .env.example .env
-# edita .env: ZERNIO_API_KEY, ZERNIO_YOUTUBE_ID, ZERNIO_FACEBOOK_ID, claves LLM...
+# edita .env con tus claves (Zernio/LLM opcionales)
 
-# 3. Levantar todo
-docker compose up -d
-
-# 4. Abrir el panel
-# http://localhost:8611
+# 3) Levantar
+docker compose up -d --build
 ```
 
-📺 **Video tutorial — instalación completa:**
-
-<video src="assets/docs/tutorial-install.mp4" controls width="720"></video>
-
-> Archivo: [`assets/docs/tutorial-install.mp4`](assets/docs/tutorial-install.mp4)
+Abrir el panel: **[http://localhost:8611](http://localhost:8611)** · API/health: **[http://localhost:8610/api/health](http://localhost:8610/api/health)**
 
 ---
 
-## ⚙️ Configuración
+## Tutorial de instalación (visual)
 
-Variables principales en `.env`:
+Flujo simulado de extremo a extremo (descarga → configuración → build → verificación):
+
+![Instalación paso a paso](assets/docs/tutorial/instalacion-paso-a-paso.gif)
+
+| 1. Clonar repositorio | 2. Crear `.env` | 3. Configurar variables |
+|---|---|---|
+| ![Clonar](assets/docs/tutorial/01-clonar-repo.png) | ![Crear env](assets/docs/tutorial/02-crear-env.png) | ![Configurar env](assets/docs/tutorial/03-configurar-env.png) |
+
+| 4. Levantar con Docker Compose | 5. Verificar servicios y panel |
+|---|---|
+| ![Docker up](assets/docs/tutorial/04-docker-compose-up.png) | ![Verificar](assets/docs/tutorial/05-verificar.png) |
+
+Guía detallada con explicación de cada sección/formulario y troubleshooting: **[`TUTORIAL_INSTALACION.md`](TUTORIAL_INSTALACION.md)**.
+
+---
+
+## Configuración (`.env`)
+
+`cp .env.example .env` y ajusta según tu uso:
 
 | Variable | Descripción |
 |---|---|
-| `ZERNIO_API_KEY` | API key de Zernio (publicación YT/FB) |
-| `ZERNIO_YOUTUBE_ID` / `ZERNIO_FACEBOOK_ID` | IDs de cuenta |
-| `FACTORY_PUBLISH` | `1` publica de forma autónoma (default en compose) |
-| `KF_RECICLADO_CADA` | cada cuántas escenas se recicla imagen (`2` = mitad) |
-| `KF_RECLICAR_BIBLIOTECA` | `1` (default) habilita el reciclado de la imagenoteca + caché en la fábrica 24/7 |
-| `KF_REUTILIZAR_UMBRAL` | coincidencia mínima de idea para reusar una imagen dentro del episodio (`0.80`) |
-| `COMICS_CAPTIONS_MAX_PALABRAS` | presupuesto de palabras por caption del cómic (`18`) |
-| `OLLAMA_BASE_URL` | endpoint de Ollama (LLM local, gratis) |
-| `OPENAI_API_KEY` | API key OpenAI (GPT Image) — nuevo salvapantallas de la cascada de imágenes |
-| `PORT` (factory) | `8610` (REST + WebSocket) |
+| `ZERNIO_API_KEY`, `ZERNIO_YOUTUBE_ID`, `ZERNIO_FACEBOOK_ID` | Credenciales para publicación YouTube/Facebook vía Zernio |
+| `FACTORY_PUBLISH` | `1` publica automáticamente (default en compose), `0` modo solo generación/revisión |
+| `OLLAMA_BASE_URL` | Endpoint de Ollama (LLM local). En Docker: `http://host.docker.internal:11434/v1` |
+| `GEMINI_API_KEY`, `OPENAI_API_KEY`, `POLLINATIONS_API_KEY` | Proveedores opcionales (la cascada prioriza rutas $0) |
+| `KF_RECICLADO_CADA` | Frecuencia de reciclado de imágenes para reducir costo |
+| `ALLOW_PAID_LLM` | `0` recomendado para operación $0-first |
 
-El panel permite autorizar/desautorizar publicación en caliente
-(`POST /api/control` con `publicar_on` / `publicar_off`).
+> No subas `.env` al repositorio. Puedes operar sin claves para generación local; la publicación requiere credenciales válidas.
 
 ---
 
-## 🖥️ Frontend (Mission Control)
+## Mission Control (panel web)
 
-Servido por nginx en `http://localhost:8611`, proxy a `factoryd:8610`.
+Servido por nginx en `http://localhost:8611` (proxy a `factoryd:8610`).
 
-📺 **Video tutorial — recorrido del panel:**
-
-<video src="assets/docs/tutorial-dashboard.mp4" controls width="720"></video>
-
-Vistas del riel lateral:
-
-| Vista | Contenido |
+| Vista | Descripción |
 |---|---|
-| Inicio | Banner de fábrica, feed de últimos episodios y capítulos |
-| Fábrica de Video | Cinta de producción (10 estaciones), galería, keyframes, métricas |
-| Fábrica de Cómics | Prensa de tinta, galería de capítulos, viñetas |
-| Métricas | Publicación YT/FB (vía Zernio), interacción por día, emoción, seguidores |
-| Conectores MCP | Zernio, YouTube, Facebook, Telegram, LLM + registrar nuevos |
-| Oficina 3D | Central de operaciones: carrusel 3D de estaciones por agente (giro auto, drag, foco) |
-
-Screenshots:
+| **Inicio** | Banner de estado, feed de episodios/capítulos recientes |
+| **Fábrica de Video** | Cinta de producción (estaciones), galería, keyframes, métricas |
+| **Fábrica de Cómics** | Prensa de tinta, galería de capítulos y viñetas |
+| **Métricas** | Publicación/interacción YT/FB (vía Zernio) |
+| **Conectores MCP** | Zernio, YouTube, Facebook, Telegram, LLM y más |
+| **Oficina 3D** | Visualización 3D interactiva de agentes/estaciones |
 
 | Inicio | Fábrica de Video |
 |---|---|
 | ![Inicio](assets/docs/dashboard-inicio.png) | ![Video](assets/docs/dashboard-fabrica-video.png) |
-| **Cómics** | **Oficina 3D** |
-| ![Cómics](assets/docs/dashboard-fabrica-comics.png) | ![Oficina 3D](assets/docs/dashboard-oficina3d.png) |
-| **Métricas** | **Conectores** |
-| ![Métricas](assets/docs/dashboard-metricas.png) | ![Conectores](assets/docs/dashboard-conectores.png) |
+| **Fábrica de Cómics** | **Métricas** |
+| ![Cómics](assets/docs/dashboard-fabrica-comics.png) | ![Métricas](assets/docs/dashboard-metricas.png) |
+| **Conectores** | **Oficina 3D** |
+| ![Conectores](assets/docs/dashboard-conectores.png) | ![Oficina 3D](assets/docs/dashboard-oficina3d.png) |
+
+Recorrido grabado del panel: [`assets/docs/tutorial-dashboard.mp4`](assets/docs/tutorial-dashboard.mp4)
 
 ---
 
-## 🎞️ Ejemplos de lo que genera la fábrica
+## Ejemplos generados
 
-Videos y cómics producidos de forma autónoma (límite diario respetado, costo mínimo).
-
-- 📹 **Reel Facebook:** [`assets/docs/examples/ejemplo-reel-facebook.mp4`](assets/docs/examples/ejemplo-reel-facebook.mp4)
-- 📹 **YouTube Short:** [`assets/docs/examples/ejemplo-youtube-short.mp4`](assets/docs/examples/ejemplo-youtube-short.mp4)
-- 📹 **Collage (portada):** [`assets/docs/examples/ejemplo-collage.mp4`](assets/docs/examples/ejemplo-collage.mp4)
-- 🖼️ **Cómic (capítulo vertical):** [`assets/docs/examples/ejemplo-comic.png`](assets/docs/examples/ejemplo-comic.png)
+| Tipo | Archivo |
+|---|---|
+| Reel Facebook | [`assets/docs/examples/ejemplo-reel-facebook.mp4`](assets/docs/examples/ejemplo-reel-facebook.mp4) |
+| YouTube Short | [`assets/docs/examples/ejemplo-youtube-short.mp4`](assets/docs/examples/ejemplo-youtube-short.mp4) |
+| Collage (portada) | [`assets/docs/examples/ejemplo-collage.mp4`](assets/docs/examples/ejemplo-collage.mp4) |
+| Cómic (capítulo vertical) | [`assets/docs/examples/ejemplo-comic.png`](assets/docs/examples/ejemplo-comic.png) |
 
 ![Ejemplo de cómic generado](assets/docs/examples/ejemplo-comic.png)
 
 ---
 
-## 🏢 Oficina 3D (vista en vivo)
+## Arquitectura
 
-El panel incluye una **Oficina 3D interactiva** (`http://localhost:8611/#oficina3d`):
-escena Three.js con personajes GLB, mobiliario, iluminación y sombras. Cada agente
-del pipeline aparece como personaje cuyo color indica estado (verde=ok, azul=trabajando,
-rojo=error, ámbar=sin turno). Se actualiza en tiempo real vía `/api/oficina` + WebSocket.
-
-![Oficina 3D](assets/docs/dashboard-oficina3d.png)
-
-## 🏗️ Arquitectura
-
-```
+```text
 fabrica-stickman/
 ├── docker/                 # Dockerfiles (factory + dashboard)
 ├── docker-compose.yml      # factory :8610 + dashboard :8611
 ├── pipeline/               # motor de producción (stages, config, gates)
 ├── factory/                # acting, render, motor, skills
-├── state/                  # métricas, conectores, agentes, logs
+├── state/                  # métricas, conectores, agentes, logs (runtime)
 ├── projects/               # salidas por proyecto (videos, cómics, artefactos)
-├── assets/                 # assets estáticos + docs (screenshots/videos)
+├── assets/                 # assets estáticos + docs/tutorial + ejemplos
 └── tests/                  # suite de regresión
 ```
 
-- **Backend:** Python 3.13 + `factoryd` (REST `:8610` + WebSocket `/ws`).
+- **Backend:** Python 3.13 + `factoryd` (REST `:8610`, WebSocket `/ws`).
 - **Frontend:** nginx + HTML/CSS/JS vanilla (sin build step).
-- **Render:** ffmpeg + TTS (Piper/edge-tts) + generación de imágenes (reciclado).
+- **Render:** ffmpeg + TTS (Piper/edge-tts) + generación de imágenes con reciclado/cascada.
 
-## 🧪 Verificación
+---
+
+## Verificación y operación
 
 ```bash
-# salud del backend
+# Salud y estado
+docker compose ps
 curl http://localhost:8610/api/health
+curl -s http://localhost:8611/api/estado | head
 
-# estado de la fábrica
-curl http://localhost:8611/api/estado
+# Logs / reinicio / parada
+docker compose logs -f factory
+docker restart pulso-factory
+docker compose down
 ```
 
-Suite de tests:
+> Tras cambios en procesos de larga vida (p.ej. `factoryd.py`), reinicia el contenedor: `docker restart pulso-factory`.
+
+Tests (si tienes entorno local de desarrollo):
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-## 📄 Licencia
+---
 
-MIT — úsalo, fórkalo, mejóralo.
+## Solución de problemas
+
+| Síntoma | Causa probable | Acción |
+|---|---|---|
+| Factory no healthy / no levanta | Error de build, volúmenes o puertos | `docker compose logs factory`, revisar `docker compose ps` y puertos `8610/8611` |
+| LLM local no conecta | Ollama en host no alcanzable | Verificar Ollama activo y `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` |
+| 429/rate-limit en imágenes | Cuota de proveedor gratuito | Esperado: fallback + reciclaje/caché; mantener `KF_RECICLADO_CADA` e ingesta |
+| No publica en redes | Faltan credenciales o publish off | Revisar `ZERNIO_*`, `FACTORY_PUBLISH` y `/api/estado` |
+
+Más detalle: [`TUTORIAL_INSTALACION.md`](TUTORIAL_INSTALACION.md).
 
 ---
 
-> Construido para ser un repositorio completo, profesional y listo para viralizar:
-> instalación en un comando, panel visual, métricas reales y contenido autónomo diario.
+## Documentación
+
+- **Tutorial de instalación completo:** [`TUTORIAL_INSTALACION.md`](TUTORIAL_INSTALACION.md)
+- **Mejoras PRO recientes:** [`MEJORAS-PRO-2026-11-10.md`](MEJORAS-PRO-2026-11-10.md)
+
+---
+
+## Licencia
+
+MIT. Ver el repositorio para detalles de uso y contribución.

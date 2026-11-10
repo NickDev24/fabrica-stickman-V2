@@ -9,7 +9,8 @@
 assets/imagenoteca/
 avatar_4f/
 CODEX.md
-docs/
+/docs/
+!/assets/docs/
 .env
 ESTRATEGIA_PUBLICACION.md
 models/
