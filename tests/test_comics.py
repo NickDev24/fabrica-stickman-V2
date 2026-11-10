@@ -173,12 +173,17 @@ def test_componer_v2_libro_paginas_carrusel(tmp_path: Path):
     # portada premium como slide 1 (scroll-stop) + páginas
     assert art.get("portada") is not None
     assert Image.open(art["portada"]).size == (PAG_W, PAG_H)
+    # variantes A/B/C generadas (sin costo de imagen) para testeo de gancho/CTR
+    assert isinstance(art.get("portada_variantes"), dict) and "A" in art["portada_variantes"]
+    assert (tmp_path / "comics" / "portada_b.png").exists()
     assert len(art["carrusel"]) == n_pag + 1
     assert art["carrusel"][0].name == "00-portada.png"
     assert art["pagina"] == art["paginas"][0]
     manifest = json.loads((tmp_path / "comics" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["schema"] == "comics.v3"
     assert manifest["portada"] == "portada.png"
+    assert manifest.get("portada_variante") in ("A", "B", "C")
+    assert "A" in (manifest.get("portada_variantes") or {})
     assert manifest["vinetas"] == VINETAS_MIN
     assert manifest["texto_fuera_del_generador"] is True
 

@@ -340,6 +340,16 @@ async def bucle_247() -> None:
                 # mostrando el anterior como "PRODUCIENDO" indefinidamente.
                 estado["ep"] = None
             guardar_ctrl()
+            # Bucle cerrado (medir→aprender): tras episodio exitoso, trae métricas reales
+            # y ajusta UN cambio para el próximo. No fatal: sin datos/keys no inventa nada.
+            if rc == 0 and estado["modo"] == "corriendo":
+                for cmd_ma in ([ "/usr/local/bin/python", "-m", "pipeline.run", "medir"],
+                               [ "/usr/local/bin/python", "-m", "pipeline.run", "aprender"]):
+                    try:
+                        await correr_proceso(cmd_ma)
+                    except Exception as exc:  # noqa: BLE001
+                        await emitir({"t": "log", "linea": f"  medir/aprender: omitido ({exc})",
+                                      "clase": "info"})
             if estado["modo"] != "corriendo":
                 break
             if rc == 2:

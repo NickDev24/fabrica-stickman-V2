@@ -202,8 +202,11 @@ def _footer(d: ImageDraw.ImageDraw, pagina: int, total: int, fuentes: list[str])
 
 
 
-def _hook_texto(datos: dict, titulo: str) -> str:
-    """Titular corto de alto impacto para portada (scroll-stop, sin spoilear)."""
+def _hook_texto(datos: dict, titulo: str, variante: str = "A") -> str:
+    """Titular corto de alto impacto para portada (scroll-stop, sin spoilear).
+
+    variante A/B/C produce hooks distintos (A/B testing de packaging) sin costo de imagen.
+    """
     paneles = sorted(datos.get("paneles", []) or [], key=lambda x: int(x.get("i", 0)))
     base = ""
     for p in paneles:
@@ -213,29 +216,38 @@ def _hook_texto(datos: dict, titulo: str) -> str:
                 break
     if not base:
         base = str(titulo or "").strip()
-    # limpiar encuadres [..] y cortar a frase corta
     base = re.sub(r"\[[^\]]*\]", "", base)
     base = re.sub(r"\s+", " ", base).strip(" .-–—")
-    # preferir pregunta o primera frase corta
     m = re.search(r"([^.!?]*\?)", base)
-    if m and 8 <= len(m.group(1).split()) <= 12:
-        base = m.group(1).strip()
+    if m and 4 <= len(m.group(1).split()) <= 12:
+        frase = m.group(1).strip()
     else:
-        m = re.search(r"^([^.!?]{12,90}[.!?])", base)
-        if m:
-            base = m.group(1).strip()
-    palabras = [w for w in re.split(r"\s+", base) if w]
+        m = re.search(r"^([^.!?]{10,90}[.!?])", base)
+        frase = m.group(1).strip() if m else base
+    palabras = [w for w in re.split(r"\s+", frase) if w]
+    if variante == "B":
+        # tensión directa desde el título (promesa/curiosidad)
+        tpal = [w for w in re.split(r"\s+", str(titulo or "").strip()) if w][:7]
+        if len(tpal) >= 3:
+            palabras = tpal
+    elif variante == "C":
+        # más corto y punzante
+        if len(palabras) > 5:
+            palabras = palabras[:5]
     if len(palabras) > 8:
         palabras = palabras[:8]
     if not palabras:
         palabras = (titulo or "Pulso Curioso").split()[:6] or ["Pulso Curioso"]
-    # dividir en 2 líneas equilibradas
     mid = (len(palabras) + 1) // 2
     return " ".join(palabras[:mid]) + "\n" + " ".join(palabras[mid:])
 
 
-def _portada(ep: "Episode", datos: dict, rutas: dict[int, Path], out: Path) -> Path:
-    """Portada premium 1080x1620: primer impacto visual (slide 1 del carrusel)."""
+def _portada(ep: "Episode", datos: dict, rutas: dict[int, Path], out: Path,
+             variante: str = "A") -> Path:
+    """Portada premium 1080x1620: primer impacto visual (slide 1 del carrusel).
+
+    variante A/B/C: hook y acento distintos para A/B testing (sin costo de imagen).
+    """
     paneles = sorted(datos.get("paneles", []) or [], key=lambda x: int(x.get("i", 0)))
     # imagen base: gancho o primera viñeta con imagen real
     gancho = next((p for p in paneles if str(p.get("rol_ritmico")) == "gancho"), paneles[0] if paneles else {})
@@ -268,17 +280,19 @@ def _portada(ep: "Episode", datos: dict, rutas: dict[int, Path], out: Path) -> P
         a = int(140 * (1 - gy / max(1, int(PAG_H * 0.22) - 1)))
         d.line([(0, gy), (PAG_W, gy)], fill=(0, 0, 0))
 
+    # acento por variante (A/B testing visual)
+    acento_v = {"A": ACENTO, "B": (240, 180, 30), "C": (40, 180, 220)}.get(variante, ACENTO)
     # marca
     yb = 54
     marca = "PULSO CURIOSO"
     f_m = _fuente(34, bold=True)
     twm = d.textlength(marca, font=f_m)
-    d.rectangle([MARGEN - 10, yb - 8, MARGEN + twm + 10, yb + 36], fill=ACENTO)
+    d.rectangle([MARGEN - 10, yb - 8, MARGEN + twm + 10, yb + 36], fill=acento_v)
     d.text((MARGEN, yb), marca, fill=(255, 255, 255), font=f_m)
 
     # titular grande (scroll-stop)
     titulo = str(datos.get("titulo") or ep.read_state().get("title") or ep.slug)
-    hook = _hook_texto(datos, titulo)
+    hook = _hook_texto(datos, titulo, variante=variante)
     size = 96
     f_h = _fuente(size, bold=True)
     lineas = hook.split("\n")
@@ -292,7 +306,7 @@ def _portada(ep: "Episode", datos: dict, rutas: dict[int, Path], out: Path) -> P
         size -= 4
     y_text = int(PAG_H * 0.58)
     # barra de acento
-    d.rectangle([MARGEN, y_text - 18, MARGEN + 110, y_text - 8], fill=ACENTO)
+    d.rectangle([MARGEN, y_text - 18, MARGEN + 110, y_text - 8], fill=acento_v)
     for ln in lineas:
         # sombra gruesa + blanco para contraste máximo
         for ox, oy in ((3, 3), (2, 2), (-1, 2)):
@@ -311,7 +325,7 @@ def _portada(ep: "Episode", datos: dict, rutas: dict[int, Path], out: Path) -> P
     twc = d.textlength(cta, font=f_c)
     cx0 = (PAG_W - twc) / 2 - 26
     cy0 = PAG_H - MARGEN - 86
-    d.rounded_rectangle([cx0, cy0, cx0 + twc + 52, cy0 + 64], radius=18, fill=ACENTO)
+    d.rounded_rectangle([cx0, cy0, cx0 + twc + 52, cy0 + 64], radius=18, fill=acento_v)
     d.text((cx0 + 26, cy0 + 14), cta, fill=(255, 255, 255), font=f_c)
 
     # marco fino premium
@@ -378,15 +392,23 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
         page.save(out)
         rutas_pag.append(out)
 
-    # Portada scroll-stopper (primer impacto, slide 1 del carrusel)
+    # Portadas scroll-stopper A/B (sin costo de imagen): variantes para testear gancho/CTR.
+    variantes_portada = {}
+    for var in ("A", "B", "C"):
+        try:
+            pvar = comics / f"portada_{var.lower()}.png"
+            _portada(ep, datos, rutas_map, pvar, variante=var)
+            if pvar.exists():
+                variantes_portada[var] = pvar
+        except Exception:
+            pass
+    elegida = "A" if "A" in variantes_portada else (next(iter(variantes_portada)) if variantes_portada else None)
     portada = comics / "portada.png"
-    try:
-        _portada(ep, datos, rutas_map, portada)
-    except Exception:
-        portada = None  # portada no bloquea el libro; se omite si falla
-    portada = portada if portada and portada.exists() else None
+    if elegida:
+        portada.write_bytes(variantes_portada[elegida].read_bytes())
+    portada = portada if portada.exists() else None
 
-    # carrusel: portada (si existe) + 1 imagen POR PÁGINA
+    # carrusel: portada elegida (si existe) + 1 imagen POR PÁGINA
     rutas_car = []
     if portada:
         dst_cov = carpeta_car / "00-portada.png"
@@ -429,6 +451,8 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
         "grillas": grillas,
         "vinetas": len(paneles),
         "portada": portada.name if portada else None,
+        "portada_variante": elegida,
+        "portada_variantes": {k: v.name for k, v in variantes_portada.items()},
         "paginas": [p.name for p in rutas_pag],
         "chapter_vertical": ruta_vert.name,
         "carrusel": [p.name for p in rutas_car],
@@ -444,6 +468,8 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
     manifest_p.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"pagina": rutas_pag[0] if rutas_pag else None,
             "portada": portada,
+            "portada_variante": elegida,
+            "portada_variantes": variantes_portada,
             "paginas": rutas_pag,
             "chapter_vertical": ruta_vert,
             "carrusel": rutas_car,
