@@ -21,13 +21,13 @@ def _caption(ep: Episode, datos: dict) -> str:
     angle = str(ep.metadata().get("angle") or "").strip()
     paneles = datos.get("paneles") or []
     fuentes = len({u for p in paneles for u in (p.get("fuentes") or [])})
-    partes = [titulo]
+    partes = [f"📖 {titulo}"]
     if angle:
-        partes.append(angle)
+        partes.append(f"¿Te quedás a leerlo? {angle}")
     if paneles:
-        partes.append(f"📖 {len(paneles)} viñetas · {len(datos.get('grillas') or [])} páginas · "
-                      f"{fuentes} fuentes verificadas")
-    partes.append("#PulsoCurioso #comic #historieta")
+        partes.append(f"{len(paneles)} viñetas · {len(datos.get('grillas') or [])} páginas · hechos verificados ({fuentes} fuentes)")
+    partes.append("Deslizá la portada y leé la historia completa.")
+    partes.append("#PulsoCurioso #comic #historieta #curiosidades")
     return "\n\n".join(partes)[:2000]
 
 
@@ -72,7 +72,9 @@ def publicar_facebook(ep: Episode, datos: dict | None = None) -> dict:
     if not qc.get("aprobado"):
         return {"status": "qc_no_aprobado", "motivo": "comics/qc.json sin aprobado=true"}
 
-    paginas = sorted((comics / "carrusel").glob("pag-*.png"))[:MAX_IMAGENES]
+    portada = sorted((comics / "carrusel").glob("00-portada.png"))
+    paginas = portada + sorted((comics / "carrusel").glob("pag-*.png"))
+    paginas = paginas[:MAX_IMAGENES]
     if not paginas:
         return {"status": "sin_material", "motivo": "no hay páginas en comics/carrusel"}
 

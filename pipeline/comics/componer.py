@@ -1,26 +1,26 @@
-"""Composición del cómic FUERA del generador de imágenes (contrato comics.v2).
+"""Composición del cómic FUERA del generador de imágenes (contrato comics.v2, premium).
 
 El modelo de difusión dibuja la ilustración cruda; AQUÍ se arma el LIBRO:
-  - páginas 1080x1620 con GRILLAS REALES de 3 bandas (ej. 3/4/3: tres viñetas
-    arriba, cuatro al medio, tres abajo) tomadas del storyboard,
+  - PORTADA scroll-stopper (slide 1): impacto visual alto en feed, titular corto,
+    contraste fuerte y branding — pensada para quien nunca leyó un cómic.
+  - páginas 1080x1620 con GRILLAS REALES de 3 bandas (ej. 3/4/3) tomadas del storyboard,
   - viñetas con imagen COVER-CROP (nada de thumbnails con relleno),
   - marco de tinta grueso + tachuelas de esquina (oficio de historieta),
-  - caption de narración compuesto tipográficamente (texto FUERA del modelo),
+  - caption de narración compuesto tipográficamente, alta legibilidad móvil,
   - viñeta de silencio = panel negro con caption (beat de descompresión),
-  - número de viñeta pequeño, encabezado "PULSO CURIOSO · título",
   - footer por página: número de página + fuentes verificadas del capítulo,
-  - chapter_vertical.png (páginas apiladas) y carrusel POR PÁGINA (1 imagen
-    por página, formato libro — no 1 imagen por panel).
+  - chapter_vertical.png (páginas apiladas) y carrusel POR PÁGINA (1 imagen por página).
 
-Reglas del diseño: sin párrafos que compitan con la imagen; el caption entra
-en la viñeta bajando tipografía, nunca se recorta el contenido citado.
+Reglas: sin párrafos que compitan con la imagen; el caption entra bajando tipografía,
+nunca se recorta el contenido citado.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from ..episode import Episode
 
@@ -30,16 +30,18 @@ FONT_REG = Path(__file__).resolve().parents[2] / "assets" / "comics" / "fonts" /
 PAG_W, PAG_H = 1080, 1620
 MARGEN = 38
 GUTTER = 14
-FRAME = 6              # marco de tinta por viñeta
+FRAME = 7              # marco de tinta por viñeta
 TINTA = (18, 16, 14)   # tinta negra cálida
-ACENTO = (196, 30, 30)
-PAPEL = (238, 232, 224)
-SOMBRA_FUENTE = (120, 60, 40)
+ACENTO = (226, 48, 40) # acento alto impacto (rojo vivo)
+PAPEL = (242, 236, 228)
+SOMBRA_FUENTE = (160, 150, 140)
 TITULO_PX = 46
 CABECERA_PX = 20
 FOOTER_PX = 19
-CAP_MAX = 30           # tipografía de caption: arranca acá y baja hasta 18
-CAP_MIN = 18
+# Caption premium: legible en móvil, alto contraste, texto breve (no compite con imagen)
+CAP_MAX = 38
+CAP_MIN = 22
+CAP_PAD = 16
 
 LAZO = "/"
 
@@ -87,16 +89,14 @@ def _tachuelas(d: ImageDraw.ImageDraw, x0: int, y0: int, x1: int, y1: int) -> No
 
 def _vineta(d: ImageDraw.ImageDraw, page: Image.Image, panel: dict, img: Path,
             x0: int, y0: int, w: int, h: int, participantes: int) -> None:
-    """UNA viñeta: cover-crop + marco grueso + tachuelas + caption + número."""
+    """UNA viñeta: cover-crop + marco grueso + tachuelas + caption legible móvil."""
     es_silencio = str(panel.get("accion", "")) == "silencio"
     narracion = str(panel.get("narracion", "")).strip()
-    # marco (borde exterior) — se dibuja primero para que la imagen quede adentro
     inner_x0, inner_y0 = x0 + FRAME, y0 + FRAME
     inner_x1, inner_y1 = x0 + w - FRAME, y0 + h - FRAME
     inner_w, inner_h = inner_x1 - inner_x0, inner_y1 - inner_y0
     if inner_w <= 10 or inner_h <= 10:
         return
-    # imagen: cover-crop (recorta al centrar, jamás deforma / deja relleno)
     puesta = False
     if not es_silencio and img.exists():
         try:
@@ -112,38 +112,55 @@ def _vineta(d: ImageDraw.ImageDraw, page: Image.Image, panel: dict, img: Path,
         except (OSError, ValueError):
             puesta = False
     if es_silencio or not puesta:
-        # silencio (panel negro con caption) o imagen faltante declarada
         d.rectangle([inner_x0, inner_y0, inner_x1, inner_y1],
-                    fill=TINTA if es_silencio else (60, 56, 52))
-    # caption tipográfico en la base de la viñeta (con el texto citado)
+                    fill=TINTA if es_silencio else (55, 52, 48))
+        if es_silencio:
+            # beat de silencio con tensión visual (no vacío): respiro dramático
+            f_s = _fuente(max(18, min(28, inner_w // 10)), bold=True)
+            txt_s = narracion or "…"
+            tw_s = d.textlength(txt_s, font=f_s)
+            d.text((inner_x0 + (inner_w - tw_s) / 2, inner_y0 + inner_h * 0.45),
+                   txt_s, fill=(245, 240, 232), font=f_s)
+            narracion = ""  # ya pintado centrado
+
+    # Caption: caja alta legible con gradiente, tipografía bold y sombra (scroll/móvil)
     if narracion:
-        ancho_txt = inner_w - 22
+        ancho_txt = inner_w - CAP_PAD * 2
         tamaño, lineas = CAP_MAX, []
         while tamaño >= CAP_MIN:
-            f = _fuente(tamaño, bold=False)
+            f = _fuente(tamaño, bold=True)
             lineas = _confitar(narracion, f, ancho_txt, d)
-            if len(lineas) * (tamaño + 6) + 12 <= max(60, int(inner_h * 0.5)):
+            if len(lineas) * (tamaño + 8) + 18 <= max(64, int(inner_h * 0.55)):
                 break
             tamaño -= 2
-        lineas = lineas[:12]
-        f = _fuente(tamaño, bold=False)
-        alto = len(lineas) * (tamaño + 6) + 10
+        lineas = lineas[:10]
+        f = _fuente(tamaño, bold=True)
+        alto = len(lineas) * (tamaño + 8) + 16
         cy0 = inner_y1 - alto
-        d.rectangle([inner_x0, cy0, inner_x1, inner_y1], fill=PAPEL,
-                    outline=TINTA, width=2)
-        ty = cy0 + 5
+        # degradado inferior para legibilidad sin tapar demasiado la imagen
+        grad_h = min(alto + 40, inner_h)
+        for gy in range(grad_h):
+            a = int(40 + 150 * (gy / max(1, grad_h - 1)))
+            yy = inner_y1 - grad_h + gy
+            d.line([(inner_x0, yy), (inner_x1, yy)], fill=(10, 10, 10))
+        # capa sólida suave bajo texto
+        d.rectangle([inner_x0, cy0, inner_x1, inner_y1], fill=(12, 12, 12))
+        ty = cy0 + 8
         for ln in lineas:
-            d.text((inner_x0 + 11, ty), ln, fill=TINTA, font=f)
-            ty += tamaño + 6
-    # número de viñeta: ficha chica arriba a la izquierda
-    r = 15
+            # sombra para contraste en cualquier fondo
+            d.text((inner_x0 + CAP_PAD + 1, ty + 1), ln, fill=(0, 0, 0), font=f)
+            d.text((inner_x0 + CAP_PAD, ty), ln, fill=(250, 248, 244), font=f)
+            ty += tamaño + 8
+
+    # badge de número discreto (no compite)
+    r = 14
     d.ellipse([inner_x0 + 8, inner_y0 + 8, inner_x0 + 8 + 2 * r, inner_y0 + 8 + 2 * r],
-              fill=ACENTO, outline=TINTA, width=2)
+              fill=ACENTO, outline=(255, 255, 255), width=2)
     num = str(int(panel.get("i", 0)))
-    f_num = _fuente(17)
+    f_num = _fuente(16, bold=True)
     tw = d.textlength(num, font=f_num)
-    d.text((inner_x0 + 8 + r - tw / 2, inner_y0 + 10), num, fill=PAPEL, font=f_num)
-    # marco por encima + tachuelas
+    d.text((inner_x0 + 8 + r - tw / 2, inner_y0 + 9), num, fill=(255, 255, 255), font=f_num)
+    # marco y tachuelas
     d.rectangle([x0, y0, x0 + w, y0 + h], outline=TINTA, width=FRAME)
     _tachuelas(d, x0 + 3, y0 + 3, x0 + w - 3, y0 + h - 3)
 
@@ -182,6 +199,125 @@ def _footer(d: ImageDraw.ImageDraw, pagina: int, total: int, fuentes: list[str])
     d.text((MARGEN, y), f"PÁGINA {pagina} DE {total}", fill=SOMBRA_FUENTE, font=_fuente(FOOTER_PX))
     ancho_fuentes = d.textlength(txt_fuentes, font=f)
     d.text((PAG_W - MARGEN - ancho_fuentes, y), txt_fuentes, fill=SOMBRA_FUENTE, font=f)
+
+
+
+def _hook_texto(datos: dict, titulo: str) -> str:
+    """Titular corto de alto impacto para portada (scroll-stop, sin spoilear)."""
+    paneles = sorted(datos.get("paneles", []) or [], key=lambda x: int(x.get("i", 0)))
+    base = ""
+    for p in paneles:
+        if str(p.get("rol_ritmico")) in ("gancho", "contexto"):
+            base = str(p.get("narracion") or p.get("ancla_guion") or "").strip()
+            if base:
+                break
+    if not base:
+        base = str(titulo or "").strip()
+    # limpiar encuadres [..] y cortar a frase corta
+    base = re.sub(r"\[[^\]]*\]", "", base)
+    base = re.sub(r"\s+", " ", base).strip(" .-–—")
+    # preferir pregunta o primera frase corta
+    m = re.search(r"([^.!?]*\?)", base)
+    if m and 8 <= len(m.group(1).split()) <= 12:
+        base = m.group(1).strip()
+    else:
+        m = re.search(r"^([^.!?]{12,90}[.!?])", base)
+        if m:
+            base = m.group(1).strip()
+    palabras = [w for w in re.split(r"\s+", base) if w]
+    if len(palabras) > 8:
+        palabras = palabras[:8]
+    if not palabras:
+        palabras = (titulo or "Pulso Curioso").split()[:6] or ["Pulso Curioso"]
+    # dividir en 2 líneas equilibradas
+    mid = (len(palabras) + 1) // 2
+    return " ".join(palabras[:mid]) + "\n" + " ".join(palabras[mid:])
+
+
+def _portada(ep: "Episode", datos: dict, rutas: dict[int, Path], out: Path) -> Path:
+    """Portada premium 1080x1620: primer impacto visual (slide 1 del carrusel)."""
+    paneles = sorted(datos.get("paneles", []) or [], key=lambda x: int(x.get("i", 0)))
+    # imagen base: gancho o primera viñeta con imagen real
+    gancho = next((p for p in paneles if str(p.get("rol_ritmico")) == "gancho"), paneles[0] if paneles else {})
+    img_path = rutas.get(int(gancho.get("i", 0))) if gancho else None
+    page = Image.new("RGB", (PAG_W, PAG_H), TINTA)
+    puesta = False
+    if img_path and Path(img_path).exists():
+        try:
+            im = Image.open(img_path).convert("RGB")
+            # contraste/saturación leve para impacto (sin dependencias extra)
+            im = ImageOps.autocontrast(im, cutoff=1)
+            escala = max(PAG_W / im.width, PAG_H / im.height)
+            nw, nh = max(1, round(im.width * escala)), max(1, round(im.height * escala))
+            im = im.resize((nw, nh), Image.LANCZOS)
+            dx, dy = (nw - PAG_W) // 2, (nh - PAG_H) // 2
+            im = im.crop((dx, dy, dx + PAG_W, dy + PAG_H))
+            page.paste(im, (0, 0))
+            puesta = True
+        except (OSError, ValueError):
+            puesta = False
+    if not puesta:
+        page.paste(Image.new("RGB", (PAG_W, PAG_H), (30, 28, 26)), (0, 0))
+    d = ImageDraw.Draw(page)
+    # gradiente superior e inferior para legibilidad/impacto
+    for gy in range(int(PAG_H * 0.55)):
+        a = int(10 + 170 * (gy / max(1, int(PAG_H * 0.55) - 1)))
+        y = PAG_H - int(PAG_H * 0.55) + gy
+        d.line([(0, y), (PAG_W, y)], fill=(0, 0, 0))
+    for gy in range(int(PAG_H * 0.22)):
+        a = int(140 * (1 - gy / max(1, int(PAG_H * 0.22) - 1)))
+        d.line([(0, gy), (PAG_W, gy)], fill=(0, 0, 0))
+
+    # marca
+    yb = 54
+    marca = "PULSO CURIOSO"
+    f_m = _fuente(34, bold=True)
+    twm = d.textlength(marca, font=f_m)
+    d.rectangle([MARGEN - 10, yb - 8, MARGEN + twm + 10, yb + 36], fill=ACENTO)
+    d.text((MARGEN, yb), marca, fill=(255, 255, 255), font=f_m)
+
+    # titular grande (scroll-stop)
+    titulo = str(datos.get("titulo") or ep.read_state().get("title") or ep.slug)
+    hook = _hook_texto(datos, titulo)
+    size = 96
+    f_h = _fuente(size, bold=True)
+    lineas = hook.split("\n")
+    while size >= 54:
+        f_h = _fuente(size, bold=True)
+        lineas = hook.split("\n")
+        maxw = max((d.textlength(ln, font=f_h) for ln in lineas), default=0)
+        totalh = len(lineas) * (size + 10)
+        if maxw <= PAG_W - 2 * MARGEN - 10 and totalh <= 320:
+            break
+        size -= 4
+    y_text = int(PAG_H * 0.58)
+    # barra de acento
+    d.rectangle([MARGEN, y_text - 18, MARGEN + 110, y_text - 8], fill=ACENTO)
+    for ln in lineas:
+        # sombra gruesa + blanco para contraste máximo
+        for ox, oy in ((3, 3), (2, 2), (-1, 2)):
+            d.text((MARGEN + ox, y_text + oy), ln, fill=(0, 0, 0), font=f_h)
+        d.text((MARGEN, y_text), ln, fill=(255, 255, 255), font=f_h)
+        y_text += size + 10
+
+    # subtítulo/serie corto
+    subt = "HISTORIETA · HECHOS VERIFICADOS"
+    f_s = _fuente(30, bold=True)
+    d.text((MARGEN + 2, y_text + 14), subt, fill=(235, 230, 224), font=f_s)
+
+    # CTA de deslizamiento (clave para carrusel FB)
+    cta = "DESLIZÁ Y LEÉ LA HISTORIA  →"
+    f_c = _fuente(34, bold=True)
+    twc = d.textlength(cta, font=f_c)
+    cx0 = (PAG_W - twc) / 2 - 26
+    cy0 = PAG_H - MARGEN - 86
+    d.rounded_rectangle([cx0, cy0, cx0 + twc + 52, cy0 + 64], radius=18, fill=ACENTO)
+    d.text((cx0 + 26, cy0 + 14), cta, fill=(255, 255, 255), font=f_c)
+
+    # marco fino premium
+    d.rectangle([10, 10, PAG_W - 10, PAG_H - 10], outline=(245, 240, 232), width=4)
+    page.save(out)
+    return out
 
 
 def _pagina(ep: Episode, datos: dict, grilla: list[int], paneles_pg: list[dict],
@@ -242,14 +378,26 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
         page.save(out)
         rutas_pag.append(out)
 
-    # carrusel: 1 imagen POR PÁGINA (formato libro), no por panel
+    # Portada scroll-stopper (primer impacto, slide 1 del carrusel)
+    portada = comics / "portada.png"
+    try:
+        _portada(ep, datos, rutas_map, portada)
+    except Exception:
+        portada = None  # portada no bloquea el libro; se omite si falla
+    portada = portada if portada and portada.exists() else None
+
+    # carrusel: portada (si existe) + 1 imagen POR PÁGINA
     rutas_car = []
+    if portada:
+        dst_cov = carpeta_car / "00-portada.png"
+        dst_cov.write_bytes(portada.read_bytes())
+        rutas_car.append(dst_cov)
     for src in rutas_pag:
         dst = carpeta_car / src.name
         dst.write_bytes(src.read_bytes())
         rutas_car.append(dst)
 
-    # chapter vertical: páginas apiladas para lectura continua
+    # chapter vertical: páginas apiladas para lectura continua (solo historia)
     total_h = PAG_H * len(rutas_pag)
     vertical = Image.new("RGB", (PAG_W, total_h), TINTA)
     for j, src in enumerate(rutas_pag):
@@ -257,7 +405,7 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
     ruta_vert = comics / "chapter_vertical.png"
     vertical.save(ruta_vert)
 
-    # huérfanos de formatos anteriores (v1: pagina_vertical / panel-*.png)
+    # huérfanos de formatos anteriores
     for viejo in comics.glob("pagina_vertical.png"):
         viejo.unlink()
     for hu in carpeta_car.glob("panel-*.png"):
@@ -267,16 +415,20 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
         if hu.name not in vigentes:
             hu.unlink()
     vigentes_car = {p.name for p in rutas_car}
+    for hu in carpeta_car.glob("*portada*.png"):
+        if hu.name not in vigentes_car:
+            hu.unlink()
     for hu in carpeta_car.glob("pag-*.png"):
         if hu.name not in vigentes_car:
             hu.unlink()
 
     manifest = {
-        "schema": "comics.v2",
+        "schema": "comics.v3",
         "slug": ep.slug,
         "titulo": str(datos.get("titulo", ep.slug)),
         "grillas": grillas,
         "vinetas": len(paneles),
+        "portada": portada.name if portada else None,
         "paginas": [p.name for p in rutas_pag],
         "chapter_vertical": ruta_vert.name,
         "carrusel": [p.name for p in rutas_car],
@@ -291,6 +443,7 @@ def componer(ep: Episode, datos: dict, rutas: list[Path]) -> dict:
     manifest_p = comics / "manifest.json"
     manifest_p.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"pagina": rutas_pag[0] if rutas_pag else None,
+            "portada": portada,
             "paginas": rutas_pag,
             "chapter_vertical": ruta_vert,
             "carrusel": rutas_car,

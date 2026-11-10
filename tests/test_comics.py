@@ -152,6 +152,7 @@ def test_componer_v2_libro_paginas_carrusel(tmp_path: Path):
     ep = type("Ep", (), {})()
     ep.dir = tmp_path
     ep.slug = "prueba-libro"
+    ep.read_state = lambda: {"title": "El robo del museo"}
     d = _storyboard(13)
     # imágenes juguetonas: cuadrados decodificables suficientemente grandes
     rutas = {}
@@ -169,10 +170,15 @@ def test_componer_v2_libro_paginas_carrusel(tmp_path: Path):
     for pa in art["paginas"]:
         assert Image.open(pa).size == (PAG_W, PAG_H)
     assert Image.open(art["chapter_vertical"]).size == (PAG_W, PAG_H * n_pag)
-    assert len(art["carrusel"]) == n_pag
+    # portada premium como slide 1 (scroll-stop) + páginas
+    assert art.get("portada") is not None
+    assert Image.open(art["portada"]).size == (PAG_W, PAG_H)
+    assert len(art["carrusel"]) == n_pag + 1
+    assert art["carrusel"][0].name == "00-portada.png"
     assert art["pagina"] == art["paginas"][0]
     manifest = json.loads((tmp_path / "comics" / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["schema"] == "comics.v2"
+    assert manifest["schema"] == "comics.v3"
+    assert manifest["portada"] == "portada.png"
     assert manifest["vinetas"] == VINETAS_MIN
     assert manifest["texto_fuera_del_generador"] is True
 

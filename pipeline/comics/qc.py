@@ -70,8 +70,8 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
     grillas = datos.get("grillas") or []
     n_v = len(paneles)
 
-    if datos.get("schema") != "comics.v2":
-        problemas.append(f"schema {datos.get('schema')!r} != comics.v2")
+    if datos.get("schema") not in ("comics.v2", "comics.v3"):
+        problemas.append(f"schema {datos.get('schema')!r} no soportado (esperado comics.v2/v3)")
     if n_v < VINETAS_MIN:
         problemas.append(f"{n_v} viñetas < mínimo del dueño ({VINETAS_MIN})")
 
@@ -187,8 +187,16 @@ def ejecutar(ep: Episode, datos: dict, rutas_imagenes: list, artefactos: dict) -
         except OSError as e:
             problemas.append(f"chapter_vertical ilegible: {e}")
     carrusel = artefactos.get("carrusel") or []
-    if len(carrusel) != len(rutas_pag):
-        problemas.append(f"carrusel con {len(carrusel)} imágenes != {len(rutas_pag)} páginas")
+    portada = artefactos.get("portada")
+    esperado_carrusel = len(rutas_pag) + (1 if portada else 0)
+    if len(carrusel) != esperado_carrusel:
+        problemas.append(f"carrusel con {len(carrusel)} imágenes != {esperado_carrusel} (páginas+portada)")
+    if portada:
+        try:
+            if Image.open(portada).size != PAG_TAM:
+                problemas.append(f"portada {Image.open(portada).size} != {PAG_TAM}")
+        except OSError as e:
+            problemas.append(f"portada ilegible: {e}")
 
     # personajes declarados
     ficha_p = ep.dir / "comics" / "personajes.json"
