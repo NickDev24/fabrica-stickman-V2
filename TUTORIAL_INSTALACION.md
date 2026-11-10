@@ -1,38 +1,53 @@
-# Guía de instalación — PULSO Curioso (Fábrica Stickman V2)
+# Tutorial de instalación, configuración y deploy — Stickman Factory V2
 
-Instrucciones basadas en la configuración real del repositorio (`.env.example`, `docker-compose.yml`) para desplegar la fábrica localmente y configurar secretos/canales.
+Guía práctica para desplegar **Stickman Factory V2** en local con Docker Compose, configurar secretos/cuentas y poner la fábrica en funcionamiento.
 
 **Repositorio:** https://github.com/NickDev24/fabrica-stickman-V2
 
 ---
 
+## Videos tutoriales (incluidos en el repositorio)
+
+### Instalación y puesta en marcha
+<video src="assets/docs/tutorial-install.mp4" controls width="960"></video>
+
+[Descargar / abrir: `assets/docs/tutorial-install.mp4`](assets/docs/tutorial-install.mp4)
+
+### Configuración y recorrido (dashboard / operación)
+<video src="assets/docs/tutorial-dashboard.mp4" controls width="960"></video>
+
+[Descargar / abrir: `assets/docs/tutorial-dashboard.mp4`](assets/docs/tutorial-dashboard.mp4)
+
+---
+
 ## 1. Requisitos previos
 
-- Git
-- Docker Engine + Docker Compose v2 (`docker compose`)
-- ~8–15 GB de disco libre y 8 GB+ RAM recomendado
-- (Opcional, según tu entorno) Ollama en el host si usarás LLM local; el compose apunta a `http://host.docker.internal:11434/v1`
-- (Opcional) Claves de proveedores (LLM/imágenes) y credenciales de publicación Zernio
+- **Git** 2.x+
+- **Docker Engine** 24+ y **Docker Compose v2** (`docker compose`)
+- **Disco:** ~8–15 GB libres (imágenes, caché, renders). **RAM:** 8 GB+ recomendado
+- **Puertos libres:** `8610` (API/backend) y `8611` (dashboard)
+- (Opcional) **Ollama** en el host para LLM local
+- (Opcional) Claves de proveedores LLM/imágenes y credenciales **Zernio** para publicación
 
-Comprobación:
+Verificación:
 ```bash
 git --version
 docker --version
 docker compose version
 ```
 
-### Nota importante sobre rutas/volúmenes (Docker Compose)
+### Nota sobre `docker-compose.yml` (rutas y entorno)
 
-`docker-compose.yml` está configurado para el entorno del proyecto y:
-- ejecuta como `user: "1000:1000"` con `HOME=/home/facu`
-- monta el repo en `/app` y, además, rutas del host: `/home/facu/piper-env` y `/home/facu/.local/bin`
-- expone `factory` en `8610` y `dashboard` en `8611`
+La configuración incluida (`docker-compose.yml`) asume un entorno de referencia:
+- `user: "1000:1000"`, `HOME=/home/facu`
+- Monta el repositorio en `/app` y rutas del host: `/home/facu/piper-env`, `/home/facu/.local/bin`
+- `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` (Ollama en el host)
 
-Si tu máquina/usuario/rutas difieren, ajusta `user`, `HOME` y los volúmenes en `docker-compose.yml` antes de levantar para que Piper/edge-tts y permisos funcionen correctamente.
+**Si tu usuario o rutas difieren, ajusta `user`, `HOME` y los volúmenes** en `docker-compose.yml` antes del deploy para que TTS/herramientas y permisos funcionen correctamente.
 
 ---
 
-## 2. Descargar
+## 2. Instalación (descarga)
 
 ```bash
 git clone https://github.com/NickDev24/fabrica-stickman-V2.git
@@ -41,121 +56,99 @@ cd fabrica-stickman-V2
 
 ---
 
-## 3. Configurar `.env` (secretos, cuentas y canales)
+## 3. Configuración (`.env`)
 
-Crea el archivo de entorno desde la plantilla:
+Crea el archivo de entorno y edítalo con tus valores:
 
 ```bash
 cp .env.example .env
+# edita .env (nano, vim, code, etc.)
 ```
 
-Edita `.env` y completa los valores que necesites. Variables definidas en `.env.example`:
+Variables definidas en `.env.example`:
 
-```dotenv
-# LLM / proveedores
-MISTRAL_API_KEY=
-QWEN_API_KEY=
-CLOUDFLARED_ACCOUNTS_ID=
-CLOUDFLARED_WORKER_AI=
-BADROCK_API_KEY=
-AIONLABS_API_KEY=
-GEMINI_API_KEY=
-GOOGLE_GEMINI_API_KEY=
-NAME_PROJECT=
-NUMBER_PROJECT=
-ID_PROJECT=
-KAGGLE_API_KEY=
-HUGGINFACE_TOKEN=
-POLLINATIONS_API_KEY=
+| Variable | Propósito |
+|---|---|
+| `MISTRAL_API_KEY`, `QWEN_API_KEY` | Proveedores LLM |
+| `CLOUDFLARED_ACCOUNTS_ID`, `CLOUDFLARED_WORKER_AI` | Cloudflare / Workers AI (imágenes, si aplica) |
+| `BADROCK_API_KEY`, `AIONLABS_API_KEY` | Proveedores adicionales |
+| `TELEGRAM_TOKEN_BOT`, `TELEGRAM_CHAT_ID` | Telegram (integración/notificaciones) |
+| `ZERNIO_API_KEY`, `ZERNIO_ACCOUNT_ID`, `ZERNIO_FACEBOOK_ID`, `ZERNIO_YOUTUBE_ID` | Publicación vía Zernio: API y **IDs de cuentas/canales** |
+| `AUTO_PUBLISH`, `FACTORY_PUBLISH` | Publicación automática (`compose` usa `FACTORY_PUBLISH`, default `1`) |
+| `KF_RECICLADO_CADA` | Frecuencia de reciclado de imágenes (default `2`) |
+| `COMICS_ENABLED`, `COMICS_CAPTIONS_LLM` | Módulo cómics |
+| `KAGGLE_API_KEY`, `HUGGINFACE_TOKEN` | Tokens de plataformas |
+| `GEMINI_API_KEY`, `GOOGLE_GEMINI_API_KEY`, `NAME_PROJECT`, `NUMBER_PROJECT`, `ID_PROJECT` | Google/Gemini y proyecto |
+| `ALLOW_PAID_LLM`, `GEMINI_PRESUPUESTO_USD_MES`, `ALLOW_REMOTE_LLM` | Control de costos / LLM pago o remoto |
+| `CF_MAX_IMAGENES_DIA`, `POLLINATIONS_API_KEY` | Límites y proveedor de imagen |
 
-# Integraciones
-TELEGRAM_TOKEN_BOT=
-TELEGRAM_CHAT_ID=
-
-# Publicación Zernio (cuentas/canales destino)
-ZERNIO_API_KEY=
-ZERNIO_ACCOUNT_ID=
-ZERNIO_FACEBOOK_ID=
-ZERNIO_YOUTUBE_ID=
-
-# Control de publicación y producción
-AUTO_PUBLISH=
-FACTORY_PUBLISH=
-KF_RECICLADO_CADA=2
-COMICS_ENABLED=
-COMICS_CAPTIONS_LLM=
-
-# Costos / límites
-ALLOW_PAID_LLM=
-GEMINI_PRESUPUESTO_USD_MES=
-ALLOW_REMOTE_LLM=
-CF_MAX_IMAGENES_DIA=
-```
-
-**Guía rápida:**
-- **Secretos:** nunca commitees `.env`. Guárdalo solo en tu máquina.
-- **Publicación (Zernio):** configura `ZERNIO_API_KEY`, `ZERNIO_ACCOUNT_ID` y los IDs de destino `ZERNIO_YOUTUBE_ID` / `ZERNIO_FACEBOOK_ID` (tus canales/cuentas). Controla el modo automático con `FACTORY_PUBLISH` (compose lo toma, default `1`) y/o `AUTO_PUBLISH`.
-- **LLM/Imágenes:** agrega las claves de los proveedores que vayas a usar; variables de costo/límites (`ALLOW_PAID_LLM`, `ALLOW_REMOTE_LLM`, `GEMINI_PRESUPUESTO_USD_MES`, `CF_MAX_IMAGENES_DIA`) te permiten controlar gasto/rutas.
-- **Ollama local:** el contenedor usa `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1` (definido en compose) para llegar al Ollama del host.
+**Recomendaciones:**
+- **No** versionar `.env` ni compartir secretos.
+- **Canales/cuentas:** configura `ZERNIO_API_KEY`, `ZERNIO_ACCOUNT_ID` y los IDs de destino (`ZERNIO_YOUTUBE_ID`, `ZERNIO_FACEBOOK_ID`) con tus cuentas reales.
+- **Modo revisión:** para no publicar automáticamente, ajusta `FACTORY_PUBLISH`/`AUTO_PUBLISH` (p.ej. `0`) y reinicia tras el cambio.
+- **Sin claves:** el arranque local es posible según componentes/proveedores disponibles; la publicación requiere credenciales válidas.
 
 ---
 
-## 4. Levantar la fábrica
+## 4. Deploy (Docker Compose)
+
+Construir y levantar servicios:
 
 ```bash
 docker compose up -d --build
 ```
 
-Qué levanta:
-- `factory` (puerto **8610**): backend `factoryd` (REST + WebSocket), pipeline en loop 24/7.
-- `dashboard` (puerto **8611**): Mission Control (nginx) con proxy a la API.
+Servicios levantados:
+- **`factory`** (`pulso-factory`, puerto `8610`): backend `factoryd` (REST + WebSocket `/ws`), healthcheck en `/api/health`.
+- **`dashboard`** (`pulso-dashboard`, puerto `8611`): Mission Control (nginx) con proxy a la API.
 
-Revisa estado:
+Comandos útiles:
 ```bash
 docker compose ps
+docker compose logs -f factory
+docker restart pulso-factory
+docker compose down
 ```
 
 ---
 
-## 5. Verificar
+## 5. Verificación
 
 ```bash
 curl http://localhost:8610/api/health
 # esperado: {"ok": true}
-
-curl -s http://localhost:8611/api/estado | head
 ```
 
-Abre el panel: **http://localhost:8611**
+- **Dashboard:** http://localhost:8611
+- **API:** http://localhost:8610
 
-Capturas reales del panel incluido en el repositorio:
-
-![Inicio](assets/docs/dashboard-inicio.png)
-![Fábrica de Video](assets/docs/dashboard-fabrica-video.png)
-![Fábrica de Cómics](assets/docs/dashboard-fabrica-comics.png)
-![Métricas](assets/docs/dashboard-metricas.png)
+Estado (`docker compose ps`) debe mostrar `factory` **healthy**.
 
 ---
 
-## 6. Operación
+## 6. Recorrido del panel (capturas reales)
 
-```bash
-docker compose logs -f factory   # ver logs
-docker restart pulso-factory     # reiniciar backend
-docker compose down              # detener
-docker compose up -d             # iniciar
-```
+| Inicio | Fábrica de Video |
+|---|---|
+| ![Inicio](assets/docs/dashboard-inicio.png) | ![Fábrica de Video](assets/docs/dashboard-fabrica-video.png) |
 
-- Ajusta `FACTORY_PUBLISH`/`AUTO_PUBLISH` en `.env` según si deseas publicar automáticamente o solo generar/revisar, y reinicia servicios tras cambios.
-- Datos y salidas de ejecución se guardan en runtime (`state/`, `projects/`, cachés) en tu máquina.
+| Fábrica de Cómics | Métricas |
+|---|---|
+| ![Fábrica de Cómics](assets/docs/dashboard-fabrica-comics.png) | ![Métricas](assets/docs/dashboard-metricas.png) |
+
+| Conectores | Oficina 3D |
+|---|---|
+| ![Conectores](assets/docs/dashboard-conectores.png) | ![Oficina 3D](assets/docs/dashboard-oficina3d.png) |
 
 ---
 
 ## 7. Solución de problemas
 
-- **Factory no healthy / errores de arranque:** `docker compose logs factory`. Revisa que las rutas montadas en `docker-compose.yml` existan en tu host o ajústalas.
-- **Puertos ocupados:** cambia el mapeo `8610:8610` / `8611:80` si ya están en uso.
-- **Ollama no conecta:** asegúrate de tener Ollama corriendo en el host y accesible vía `host.docker.internal`.
-- **No publica:** verifica `ZERNIO_API_KEY`, IDs de cuentas/canales (`ZERNIO_*`) y flags de publicación en `.env`.
-- **Cuotas/rate-limit de proveedores:** depende de tus claves/planes; ajusta límites/costos en `.env`.
+| Problema | Revisión |
+|---|---|
+| Contenedor no arranca/healthy | `docker compose logs factory`, rutas/volúmenes y `user`/`HOME` en compose, puertos `8610/8611` |
+| No conecta a Ollama | Ollama activo en host y acceso por `host.docker.internal` |
+| No publica | `ZERNIO_*`, IDs de canales/cuentas y `FACTORY_PUBLISH`/`AUTO_PUBLISH` |
+| Rate-limit de imágenes/LLM | Cuotas/proveedores, `CF_MAX_IMAGENES_DIA`, reciclado (`KF_RECICLADO_CADA`) |
 
+Para arquitectura, ejemplos y operación avanzada consulta [`README.md`](README.md).
